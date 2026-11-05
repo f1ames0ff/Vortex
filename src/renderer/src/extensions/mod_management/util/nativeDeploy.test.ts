@@ -32,6 +32,7 @@ vi.mock("../../../util/fs", () => ({
 }));
 
 import {
+  applyInstallNatively,
   canDeployNatively,
   deployWithNativeCore,
   inspectStagingNatively,
@@ -258,5 +259,39 @@ describe("native staging adapter", () => {
     });
     expect(result?.get("mod-a")).toBe("ok");
     expect(result?.get("mod-b")).toBe("missing");
+  });
+
+  it("applies install instructions through the core", async () => {
+    nativeDeploy.installApply.mockResolvedValue({
+      operation: "op-install",
+      report: { directories: 1, linked: 1, copied: 0, written: 0, failures: [] },
+    });
+
+    const result = await applyInstallNatively({
+      temp: "/temp",
+      destination: "/staging/ModA",
+      instructions: [{ type: "hardlink", source: "a.txt", destination: "a.txt" }],
+    });
+
+    expect(nativeDeploy.installApply).toHaveBeenCalledWith({
+      temp: "/temp",
+      destination: "/staging/ModA",
+      instructions: [{ type: "hardlink", source: "a.txt", destination: "a.txt" }],
+    });
+    expect(result?.report.linked).toBe(1);
+  });
+
+  it("falls back when the core predates install.apply", async () => {
+    nativeDeploy.installApply.mockRejectedValue(
+      new Error("internal: unknown method: install.apply"),
+    );
+
+    await expect(
+      applyInstallNatively({
+        temp: "/temp",
+        destination: "/staging/ModA",
+        instructions: [],
+      }),
+    ).resolves.toBeUndefined();
   });
 });

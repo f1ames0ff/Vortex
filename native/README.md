@@ -66,7 +66,10 @@ UI thread's libuv pool on thousand-mod collections. Absolute paths and `..`
 components are rejected.
 
 `install.apply` applies the generic installer's file instructions: `mkdir`,
-`copy`, `hardlink` (falling back to copy across devices) and `write`. Sources
+`copy`, `hardlink` (falling back to copy across devices) and `write`.
+`InstallManager` routes the generic installer's `mkdir`/`copy` set through it
+when the native path is enabled; FOMOD choice resolution and `generatefile`
+still run in the renderer. Sources
 are resolved inside `temp`, destinations inside `destination`; absolute paths,
 `..`, symlinked components and (on Windows) device/ADS names are rejected.
 Hardlink/copy targets are grouped by destination, so duplicate instructions are

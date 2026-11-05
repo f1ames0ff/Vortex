@@ -35,7 +35,11 @@ function unavailable(error: string): NativeDeployStatus {
 }
 
 export function nativeDeployStatus(): Promise<NativeDeployStatus> {
-  statusPromise ??= (async () => {
+  if (statusPromise !== undefined) {
+    return statusPromise;
+  }
+
+  const pending = (async () => {
     if (typeof window === "undefined" || window.api?.nativeDeploy === undefined) {
       return unavailable("native deployment IPC is not available");
     }
@@ -45,7 +49,15 @@ export function nativeDeployStatus(): Promise<NativeDeployStatus> {
       return unavailable(getErrorMessageOrDefault(err));
     }
   })();
-  return statusPromise;
+  statusPromise = pending;
+  // A transient failure (core not built yet, IPC starting) must not disable
+  // the native path for the rest of the session.
+  void pending.then((status) => {
+    if ((!status.enabled || !status.available) && statusPromise === pending) {
+      statusPromise = undefined;
+    }
+  });
+  return pending;
 }
 
 /** Forget a cached unavailable status (used by tests and manual retries). */

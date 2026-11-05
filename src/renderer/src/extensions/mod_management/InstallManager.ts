@@ -14,6 +14,7 @@ import {
 } from "@vortex/shared";
 import { parseError, VortexModStagingFolder } from "@vortex/shared";
 import { AlreadyDownloaded, InsufficientDiskSpace } from "@vortex/shared/errors";
+import type { NativeInstallInstruction } from "@vortex/shared/ipc";
 import * as _ from "lodash";
 import type { IHashResult, ILookupResult, IRule } from "modmeta-db";
 import Zip from "node-7z";
@@ -201,6 +202,7 @@ import { InstallPhaseTracker, type IDeploymentDetails } from "./util/InstallPhas
 import { isFuzzyVersion } from "./util/isFuzzyVersion";
 import metaLookupMatch from "./util/metaLookupMatch";
 import modName, { renderModReference } from "./util/modName";
+import { applyInstallNatively } from "./util/nativeDeploy";
 import queryGameId from "./util/queryGameId";
 import { reconcileOrphanedArchive } from "./util/reconcileOrphanedArchive";
 import { selectRequeueCandidates } from "./util/requeueCandidates";
@@ -4374,6 +4376,88 @@ class InstallManager {
     });
   }
 
+  /**
+   * Apply the generic installer's mkdir/copy instructions. The core, when
+   * enabled, creates links/copies in its own process; otherwise the existing
+   * renderer implementation remains the fallback.
+   */
+  private async applyInstructionFiles(
+    api: IExtensionApi,
+    archivePath: string,
+    tempPath: string,
+    destinationPath: string,
+    mkdir: IInstruction[],
+    copies: IInstruction[],
+    gameId: string,
+  ): Promise<void> {
+    const instructions: NativeInstallInstruction[] = [];
+    for (const instruction of mkdir) {
+      if (instruction.destination !== undefined) {
+        instructions.push({ type: "mkdir", destination: instruction.destination });
+      }
+    }
+
+    const folderCopies: string[] = [];
+    for (const instruction of copies) {
+      if (instruction.source === undefined || instruction.destination === undefined) {
+        continue;
+      }
+      if (instruction.source.endsWith("/") || instruction.source.endsWith("\\")) {
+        folderCopies.push(instruction.source);
+        continue;
+      }
+      // The core tries a hardlink first and falls back to a copy across devices.
+      instructions.push({
+        type: "hardlink",
+        source: instruction.source,
+        destination: instruction.destination,
+      });
+    }
+
+    if (folderCopies.length > 0) {
+      log("warn", "installer generated copy instructions for directories, these will be skipped", {
+        directories: folderCopies,
+      });
+    }
+
+    let result: Awaited<ReturnType<typeof applyInstallNatively>>;
+    try {
+      result = await applyInstallNatively({
+        temp: tempPath,
+        destination: destinationPath,
+        instructions,
+      });
+    } catch (err) {
+      log("warn", "native install failed, falling back to the TypeScript path", {
+        error: getErrorMessageOrDefault(err),
+      });
+      result = undefined;
+    }
+
+    if (result === undefined) {
+      await this.processMKDir(mkdir, destinationPath);
+      await this.extractArchive(api, archivePath, tempPath, destinationPath, copies, gameId);
+      return;
+    }
+
+    if (result.report.failures.length > 0) {
+      log("warn", "native install reported file failures", {
+        count: result.report.failures.length,
+        failures: result.report.failures.slice(0, 20),
+      });
+      api.showErrorNotification(
+        "Failed to install some files",
+        new Error(
+          result.report.failures
+            .slice(0, 20)
+            .map((failure) => `${failure.destination}: ${failure.message}`)
+            .join("\n"),
+        ),
+        { allowReport: false },
+      );
+    }
+  }
+
   private async processMKDir(instructions: IInstruction[], destinationPath: string): Promise<void> {
     for (const instruction of instructions) {
       await fs.ensureDirAsync(path.join(destinationPath, instruction.destination));
@@ -4742,17 +4826,15 @@ class InstallManager {
     //     JSON.stringify(result.instructions.map(instr => _.omit(instr, ['data']))));
     this.reportUnsupported(api, instructionGroups.unsupported, archivePath);
 
-    return this.processMKDir(instructionGroups.mkdir, destinationPath)
-      .then(() =>
-        this.extractArchive(
-          api,
-          archivePath,
-          tempPath,
-          destinationPath,
-          instructionGroups.copy,
-          gameId,
-        ),
-      )
+    return this.applyInstructionFiles(
+      api,
+      archivePath,
+      tempPath,
+      destinationPath,
+      instructionGroups.mkdir,
+      instructionGroups.copy,
+      gameId,
+    )
       .then(() => this.processGenerateFiles(instructionGroups.generatefile, destinationPath))
       .then(() =>
         this.processIniEdits(api, instructionGroups.iniedit, destinationPath, gameId, modId),
