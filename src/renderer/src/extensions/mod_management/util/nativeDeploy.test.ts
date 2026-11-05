@@ -34,6 +34,7 @@ vi.mock("../../../util/fs", () => ({
 import {
   canDeployNatively,
   deployWithNativeCore,
+  inspectStagingNatively,
   purgeWithNativeCore,
   resetNativeDeployStatus,
 } from "./nativeDeploy";
@@ -43,6 +44,8 @@ interface FakeNativeDeploy {
   plan: ReturnType<typeof vi.fn>;
   deploy: ReturnType<typeof vi.fn>;
   purge: ReturnType<typeof vi.fn>;
+  stagingStatus: ReturnType<typeof vi.fn>;
+  installApply: ReturnType<typeof vi.fn>;
 }
 
 let nativeDeploy: FakeNativeDeploy;
@@ -70,6 +73,8 @@ beforeEach(() => {
     plan: vi.fn(),
     deploy: vi.fn(),
     purge: vi.fn(),
+    stagingStatus: vi.fn(),
+    installApply: vi.fn(),
   };
   installApi(nativeDeploy);
   resetNativeDeployStatus();
@@ -220,5 +225,38 @@ describe("native deployment adapter", () => {
     expect(lastDeployment.Textures).toEqual([
       { relPath: "b.txt", source: "ModB", target: undefined, time: 1, merged: undefined },
     ]);
+  });
+});
+
+describe("native staging adapter", () => {
+  it("returns undefined when the native path is disabled", async () => {
+    nativeDeploy.status.mockResolvedValue({ enabled: false, available: false });
+    expect(await inspectStagingNatively("/staging", [{ id: "mod-a" }])).toBeUndefined();
+    expect(nativeDeploy.stagingStatus).not.toHaveBeenCalled();
+  });
+
+  it("batches staged mods and maps their status", async () => {
+    nativeDeploy.stagingStatus.mockResolvedValue({
+      mods: [
+        { id: "mod-a", installationPath: "ModA", status: "ok", entries: 2 },
+        { id: "mod-b", installationPath: "ModB", status: "missing", entries: 0 },
+      ],
+    });
+
+    const result = await inspectStagingNatively("/staging", [
+      { id: "mod-a", installationPath: "ModA" },
+      { id: "mod-b", installationPath: "ModB" },
+      { id: "downloaded-only" },
+    ]);
+
+    expect(nativeDeploy.stagingStatus).toHaveBeenCalledWith({
+      staging: "/staging",
+      mods: [
+        { id: "mod-a", installationPath: "ModA" },
+        { id: "mod-b", installationPath: "ModB" },
+      ],
+    });
+    expect(result?.get("mod-a")).toBe("ok");
+    expect(result?.get("mod-b")).toBe("missing");
   });
 });

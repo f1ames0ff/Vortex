@@ -1,5 +1,6 @@
 import path from "path";
 
+import type { NativeModStatus } from "@vortex/shared/ipc";
 import type { TFunction } from "i18next";
 import * as _ from "lodash";
 import * as React from "react";
@@ -85,6 +86,7 @@ import { modStagingFolder, modStatus } from "../util/modStatus";
 import type { UpdateState } from "../util/modUpdateState";
 import modUpdateState, { isIdValid } from "../util/modUpdateState";
 import updateState from "../util/modUpdateState";
+import { inspectStagingNatively } from "../util/nativeDeploy";
 import { removeMods } from "../util/removeMods";
 import VersionFilter from "../util/VersionFilter";
 import Author from "./Author";
@@ -1133,6 +1135,60 @@ class ModList extends ComponentEx<IProps, IComponentState> {
       });
   }
 
+  /**
+   * Refresh staging-folder state for installed mods. The native core answers
+   * the whole batch in its own process, so a large collection no longer
+   * saturates the renderer's libuv thread pool with thousands of readdirs.
+   * The local walk remains the fallback when the core is not enabled.
+   */
+  private async updateInstallationStates(
+    stagingPath: string | undefined,
+    installedMods: IModWithState[],
+    newModsWithState: { [modId: string]: IModWithState },
+  ): Promise<boolean> {
+    if (installedMods.length === 0) {
+      return false;
+    }
+
+    let changed = false;
+    let native: Map<string, NativeModStatus> | undefined;
+    if (stagingPath !== undefined) {
+      try {
+        native = await inspectStagingNatively(stagingPath, installedMods);
+      } catch {
+        native = undefined;
+      }
+    }
+
+    const applyState = (mod: IModWithState, installationState: ModInstallationState) => {
+      if (mod.installationState !== installationState) {
+        newModsWithState[mod.id] = { ...mod, installationState };
+        changed = true;
+      }
+    };
+
+    if (native === undefined) {
+      await Promise.all(
+        installedMods.map(async (mod) => {
+          applyState(mod, await this.installationStateFor(stagingPath, mod));
+        }),
+      );
+      return changed;
+    }
+
+    for (const mod of installedMods) {
+      const status = native.get(mod.id);
+      if (status === "ok" || status === "empty" || status === "missing") {
+        applyState(mod, status);
+      } else {
+        // The core saw a permission/IO error; let the local check decide.
+        applyState(mod, await this.installationStateFor(stagingPath, mod));
+      }
+    }
+
+    return changed;
+  }
+
   private updateModsWithState(newProps: IProps): Promise<void> {
     const { gameMode } = newProps;
     let changed = false;
@@ -1165,15 +1221,10 @@ class ModList extends ComponentEx<IProps, IComponentState> {
     const installedMods = Object.values(newModsWithState).filter(
       (mod) => mod.state === "installed",
     );
-    return Promise.all(
-      installedMods.map(async (mod) => {
-        const installationState = await this.installationStateFor(newProps.installPath, mod);
-        if (mod.installationState !== installationState) {
-          newModsWithState[mod.id] = { ...mod, installationState };
-          changed = true;
-        }
-      }),
-    )
+    return this.updateInstallationStates(newProps.installPath, installedMods, newModsWithState)
+      .then((statesChanged) => {
+        changed = changed || statesChanged;
+      })
       .then(() =>
         // insert downloads. Since this requires deriving mod attributes from
         // the source-specific data we need to do this asynchronously although

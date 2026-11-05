@@ -4,6 +4,8 @@
 #include "vortex/deployment/manifest.hpp"
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
+#include "vortex/core/install.hpp"
+#include "vortex/core/status.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -301,6 +303,103 @@ void testFileErrorsBecomeFailures() {
     fs::remove_all(root);
 }
 
+void testStagingStatus() {
+    const auto root = makeRoot("status");
+    const auto staging = root / "staging";
+    writeFile(staging / "ModA" / "a.txt", "a");
+    fs::create_directories(staging / "EmptyMod");
+
+    const std::vector<vortex::core::ModStatusQuery> queries = {
+        {"a", "ModA"},
+        {"empty", "EmptyMod"},
+        {"missing", "MissingMod"},
+        {"traversal", "../escape"},
+    };
+    const auto results = vortex::core::inspectMods(staging, queries);
+    check(results.size() == 4, "status result count");
+    check(results[0].status == vortex::core::ModStatus::Ok, "installed mod is ok");
+    check(results[0].entries == 1, "installed mod entry count");
+    check(results[1].status == vortex::core::ModStatus::Empty, "empty mod is empty");
+    check(results[2].status == vortex::core::ModStatus::Missing, "missing mod is missing");
+    check(results[3].status == vortex::core::ModStatus::Error, "traversal is rejected");
+
+    fs::remove_all(root);
+}
+
+void testInstallApply() {
+    const auto root = makeRoot("install");
+    const auto temp = root / "temp";
+    const auto destination = root / "destination";
+    writeFile(temp / "a.txt", "a");
+    writeFile(temp / "nested" / "b.txt", "b");
+
+    std::vector<vortex::core::InstallInstruction> instructions;
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Mkdir, "", "empty", "", false});
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Hardlink, "a.txt", "a.txt", "", false});
+    instructions.push_back({vortex::core::InstallInstructionType::Copy, "nested/b.txt",
+                            "nested/b.txt", "", false});
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Write, "", "generated.txt", "hello", false});
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Copy, "missing.txt", "missing.txt", "", true});
+
+    vortex::core::InstallRequest request;
+    request.tempPath = temp;
+    request.destinationPath = destination;
+    request.instructions = instructions;
+    request.operationId = "test-install";
+    const auto report = vortex::core::applyInstall(request);
+
+    check(report.failures.empty(), "install should not fail");
+    check(report.directories == 1, "install directory count");
+    check(report.linked == 1, "install link count");
+    check(report.copied == 1, "install copy count");
+    check(report.written == 1, "install write count");
+    check(readFile(destination / "a.txt") == "a", "linked content");
+    check(readFile(destination / "nested" / "b.txt") == "b", "copied content");
+    check(readFile(destination / "generated.txt") == "hello", "generated content");
+    check(!fs::exists(destination / "missing.txt"), "optional missing source is skipped");
+
+    fs::remove_all(root);
+}
+
+void testInstallFailuresAndJournal() {
+    const auto root = makeRoot("install-failure");
+    const auto temp = root / "temp";
+    const auto destination = root / "destination";
+    writeFile(temp / "a.txt", "a");
+    writeFile(root / "outside.txt", "outside");
+
+    std::vector<vortex::core::InstallInstruction> instructions;
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Copy, "missing.txt", "missing.txt", "", false});
+    instructions.push_back({vortex::core::InstallInstructionType::Copy, "../outside.txt",
+                            "escape.txt", "", false});
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Copy, "a.txt", "../escape.txt", "", false});
+
+    vortex::core::InstallRequest request;
+    request.tempPath = temp;
+    request.destinationPath = destination;
+    request.instructions = instructions;
+    request.journalPath = root / "journal.jsonl";
+    request.operationId = "test-failure";
+    const auto report = vortex::core::applyInstall(request);
+
+    check(report.failures.size() == 3, "all invalid instructions must fail");
+    check(!fs::exists(destination / "escape.txt"), "destination traversal must not write");
+    check(!fs::exists(root / "escape.txt"), "source traversal must not be read");
+
+    const auto journal = readFile(root / "journal.jsonl");
+    check(journal.find("\"install.begin\"") != std::string::npos, "journal begin event");
+    check(journal.find("\"install.complete\"") != std::string::npos, "journal complete event");
+    check(journal.find("\"install.failure\"") != std::string::npos, "journal failure event");
+
+    fs::remove_all(root);
+}
+
 } // namespace
 
 int main() {
@@ -312,7 +411,10 @@ int main() {
         testPurgeKeepsFailedEntries();
         testStaleBackupReportsActionableFailure();
         testFileErrorsBecomeFailures();
-        std::cout << "all deployment tests passed\n";
+        testStagingStatus();
+        testInstallApply();
+        testInstallFailuresAndJournal();
+        std::cout << "all core and deployment tests passed\n";
         return 0;
     } catch (const std::exception& err) {
         std::cerr << "deployment tests failed: " << err.what() << "\n";

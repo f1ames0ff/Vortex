@@ -52,6 +52,8 @@ try {
       plan: (request) => betterIpcRenderer.invoke("nativeDeploy:plan", request),
       deploy: (request) => betterIpcRenderer.invoke("nativeDeploy:deploy", request),
       purge: (request) => betterIpcRenderer.invoke("nativeDeploy:purge", request),
+      stagingStatus: (request) => betterIpcRenderer.invoke("nativeDeploy:stagingStatus", request),
+      installApply: (request) => betterIpcRenderer.invoke("nativeDeploy:installApply", request),
     },
 
     shell: {

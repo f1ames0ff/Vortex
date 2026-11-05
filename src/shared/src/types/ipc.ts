@@ -30,8 +30,12 @@ import type {
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeployStatus,
+  NativeInstallRequest,
+  NativeInstallResult,
   NativePurgeRequest,
   NativePurgeResult,
+  NativeStagingRequest,
+  NativeStagingResult,
 } from "./nativeDeploy";
 import type { PersistedHive, PersistedState } from "./state";
 
@@ -394,6 +398,8 @@ export interface InvokeChannels {
   "nativeDeploy:plan": (request: NativeDeployRequest) => Promise<NativeDeployPlanSummary>;
   "nativeDeploy:deploy": (request: NativeDeployRequest) => Promise<NativeDeployResult>;
   "nativeDeploy:purge": (request: NativePurgeRequest) => Promise<NativePurgeResult>;
+  "nativeDeploy:stagingStatus": (request: NativeStagingRequest) => Promise<NativeStagingResult>;
+  "nativeDeploy:installApply": (request: NativeInstallRequest) => Promise<NativeInstallResult>;
 
   // bsdiff binary patching, run on a main-process worker_thread (only paths cross IPC)
   "bsdiff:create": (oldPath: string, newPath: string, patchPath: string) => Promise<void>;

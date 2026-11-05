@@ -45,6 +45,14 @@ export class VortexCoreClient {
     });
   }
 
+  stagingStatus(request) {
+    return this.request("staging.status", request);
+  }
+
+  installApply(request) {
+    return this.request("install.apply", request);
+  }
+
   request(method, params = {}) {
     const id = this.#nextId++;
     const request = { id, method, params };

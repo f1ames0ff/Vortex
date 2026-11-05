@@ -39,8 +39,12 @@ import type {
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeployStatus,
+  NativeInstallRequest,
+  NativeInstallResult,
   NativePurgeRequest,
   NativePurgeResult,
+  NativeStagingRequest,
+  NativeStagingResult,
 } from "./nativeDeploy";
 import type { PersistedHive, PersistedState } from "./state";
 
@@ -614,6 +618,12 @@ export interface NativeDeployApi {
 
   /** Removes a deployment and restores backups through `vortex-core`. */
   purge(request: NativePurgeRequest): Promise<NativePurgeResult>;
+
+  /** Checks staging folders without the renderer walking them. */
+  stagingStatus(request: NativeStagingRequest): Promise<NativeStagingResult>;
+
+  /** Applies generic installer instructions in the core process. */
+  installApply(request: NativeInstallRequest): Promise<NativeInstallResult>;
 }
 
 export interface FeatureFlagsApi {

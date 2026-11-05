@@ -4,6 +4,8 @@
 #include "vortex/deployment/manifest.hpp"
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
+#include "vortex/core/install.hpp"
+#include "vortex/core/status.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -144,6 +146,77 @@ json planJson(const DeploymentPlan& plan) {
     };
 }
 
+json installReportJson(const vortex::core::InstallReport& report) {
+    json failures = json::array();
+    for (const auto& failure : report.failures) {
+        failures.push_back({
+            {"source", failure.source},
+            {"destination", failure.destination},
+            {"message", failure.message},
+        });
+    }
+    return {
+        {"directories", report.directories},
+        {"linked", report.linked},
+        {"copied", report.copied},
+        {"written", report.written},
+        {"failures", std::move(failures)},
+    };
+}
+
+json modStatusJson(const vortex::core::ModStatusResult& result) {
+    json value = {
+        {"id", result.id},
+        {"installationPath", result.installationPath},
+        {"status", vortex::core::statusName(result.status)},
+        {"entries", result.entries},
+    };
+    if (!result.error.empty()) {
+        value["error"] = result.error;
+    }
+    return value;
+}
+
+vortex::core::InstallInstructionType parseInstructionType(const std::string& value) {
+    if (value == "mkdir") {
+        return vortex::core::InstallInstructionType::Mkdir;
+    }
+    if (value == "copy") {
+        return vortex::core::InstallInstructionType::Copy;
+    }
+    if (value == "hardlink") {
+        return vortex::core::InstallInstructionType::Hardlink;
+    }
+    if (value == "write") {
+        return vortex::core::InstallInstructionType::Write;
+    }
+    throw std::runtime_error("unknown install instruction type: " + value);
+}
+
+std::vector<vortex::core::InstallInstruction> readInstructions(const json& params) {
+    if (!params.contains("instructions") || !params["instructions"].is_array()) {
+        throw std::runtime_error("params.instructions must be an array");
+    }
+    std::vector<vortex::core::InstallInstruction> instructions;
+    instructions.reserve(params["instructions"].size());
+    for (const auto& item : params["instructions"]) {
+        if (!item.is_object()) {
+            throw std::runtime_error("each install instruction must be an object");
+        }
+        vortex::core::InstallInstruction instruction;
+        instruction.type = parseInstructionType(item.value("type", std::string{}));
+        instruction.source = item.value("source", std::string{});
+        instruction.destination = item.value("destination", std::string{});
+        instruction.data = item.value("data", std::string{});
+        instruction.optional = item.value("optional", false);
+        if (instruction.destination.empty()) {
+            throw std::runtime_error("install instruction.destination must not be empty");
+        }
+        instructions.push_back(std::move(instruction));
+    }
+    return instructions;
+}
+
 fs::path journalDirectory(const json& params, const fs::path& stagingPath) {
     const auto value = params.value("journalDir", std::string{});
     return value.empty() ? stagingPath / ".vortex-journal" : fs::path(value);
@@ -174,6 +247,62 @@ json dispatch(CoreState& state, const Request& request) {
         }
         index.flush();
         return {{"mods", folders}, {"files", files}};
+    }
+
+    if (request.method == "staging.status") {
+        const auto stagingPath = fs::path(params.value("staging", std::string{}));
+        if (stagingPath.empty()) {
+            throw std::runtime_error("params.staging is required");
+        }
+        if (!params.contains("mods") || !params["mods"].is_array()) {
+            throw std::runtime_error("params.mods must be an array");
+        }
+
+        std::vector<vortex::core::ModStatusQuery> queries;
+        queries.reserve(params["mods"].size());
+        for (const auto& item : params["mods"]) {
+            if (!item.is_object()) {
+                throw std::runtime_error("each mod must be an object");
+            }
+            vortex::core::ModStatusQuery query;
+            query.installationPath = item.value("installationPath", std::string{});
+            query.id = item.value("id", query.installationPath);
+            if (query.installationPath.empty()) {
+                throw std::runtime_error("mod.installationPath must not be empty");
+            }
+            queries.push_back(std::move(query));
+        }
+
+        const auto results = vortex::core::inspectMods(stagingPath, queries);
+        json mods = json::array();
+        for (const auto& result : results) {
+            mods.push_back(modStatusJson(result));
+        }
+        return {{"mods", std::move(mods)}};
+    }
+
+    if (request.method == "install.apply") {
+        vortex::core::InstallRequest install;
+        install.tempPath = fs::path(params.value("temp", std::string{}));
+        install.destinationPath = fs::path(params.value("destination", std::string{}));
+        if (install.tempPath.empty() || install.destinationPath.empty()) {
+            throw std::runtime_error("params.temp and params.destination are required");
+        }
+        install.instructions = readInstructions(params);
+        install.operationId = platform::operation_id();
+        install.concurrency = params.value("concurrency", std::size_t{8});
+
+        const auto journalDirectory = params.value("journalDir", std::string{});
+        if (!journalDirectory.empty()) {
+            install.journalPath =
+                fs::path(journalDirectory) / (install.operationId + ".jsonl");
+        }
+
+        const auto report = vortex::core::applyInstall(install);
+        return {
+            {"report", installReportJson(report)},
+            {"operation", install.operationId},
+        };
     }
 
     if (request.method != "plan" && request.method != "deploy" &&

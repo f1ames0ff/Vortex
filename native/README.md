@@ -47,7 +47,9 @@ Supported requests:
 {"id":3,"method":"plan","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","mods":[{"installationPath":"ModA"}]}}
 {"id":4,"method":"deploy","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","mods":[{"installationPath":"ModA"}],"instance":"...","method":"hardlink","game":"skyrimse"}}
 {"id":5,"method":"purge","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json"}}
-{"id":6,"method":"shutdown","params":{}}
+{"id":6,"method":"staging.status","params":{"staging":"/staging","mods":[{"id":"mod-a","installationPath":"ModA"},{"id":"mod-b","installationPath":"ModB"}]}}
+{"id":7,"method":"install.apply","params":{"temp":"/tmp/ModA.extracted","destination":"/staging/ModA","instructions":[{"type":"hardlink","source":"textures/a.dds","destination":"textures/a.dds"},{"type":"write","destination":"meta.ini","data":"..."}]}}
+{"id":8,"method":"shutdown","params":{}}
 ```
 
 Every response echoes `id` and contains either `result` or `error`. Commands
@@ -56,6 +58,18 @@ catches per-request exceptions and keeps serving; file errors are returned as
 per-file failures in the report. Passing `"includeFiles": true` to `plan` and
 `deploy` returns the deployed file list, which the renderer uses to keep its
 manifest bookkeeping in sync.
+
+`staging.status` inspects a batch of mod folders in parallel inside the core.
+It replaces the renderer's per-mod `readdir` walk, which used to saturate the
+UI thread's libuv pool on thousand-mod collections. Absolute paths and `..`
+components are rejected.
+
+`install.apply` applies the generic installer's file instructions: `mkdir`,
+`copy`, `hardlink` (falling back to copy across devices) and `write`. Sources
+are resolved inside `temp`, destinations inside `destination`, with the same
+path-traversal guard. The install journal records `install.begin`,
+`install.failure` and a durable `install.complete`. FOMOD script execution stays
+in the existing .NET host; the core only receives its resolved instructions.
 
 ## Electron integration
 
@@ -66,6 +80,8 @@ renderer over typed IPC:
 - `nativeDeploy:plan`
 - `nativeDeploy:deploy`
 - `nativeDeploy:purge`
+- `nativeDeploy:stagingStatus`
+- `nativeDeploy:installApply`
 
 The preload API is `window.api.nativeDeploy`. The feature gate is
 `VORTEX_NATIVE_DEPLOY=1`; `VORTEX_CORE_PATH` overrides the binary path. Without
@@ -97,10 +113,11 @@ is treated as a path, e.g. `VORTEX_PROD_DATA=/path/to/user-data`. The existing
 `--user-data <path>` CLI flag still works too.
 
 When enabled, `hardlink_activator` deployments and purges are routed through
-the core. Other deployment methods, a missing binary, or a disabled flag keep
-the existing TypeScript implementation. The renderer still writes its own
-manifest/backup copies afterwards, so manifests stay compatible with the old
-path.
+the core, and `ModList` asks the core for staging status instead of walking
+every installed mod in the renderer. Other deployment methods, a missing
+binary, or a disabled flag keep the existing TypeScript implementation. The
+renderer still writes its own manifest/backup copies afterwards, so manifests
+stay compatible with the old path.
 
 Known integration gaps for the next slice:
 
@@ -119,6 +136,10 @@ Known integration gaps for the next slice:
 - Hardlink deploy, no-op deploy, source/content replacement, backups and purge.
 - `.vortex_backup` restore on purge.
 - Write-ahead JSONL journal for every deployment/purge.
+- Batched staging-folder status (`ok` / `empty` / `missing` / `error`) with
+  path-traversal rejection.
+- Generic installer instruction executor (`mkdir`, `copy`, `hardlink`,
+  `write`) with bounded concurrency and its own JSONL journal.
 - CLI for manual testing.
 
 The file index validates previously deployed files against the manifest, so an
@@ -161,7 +182,8 @@ given.
 ## Layout
 
 ```text
-include/vortex/deployment/   public C++ types and APIs
+include/vortex/deployment/   deployment types, planner, executor, manifest
+include/vortex/core/         staging status and install instruction APIs
 src/                         implementation
 cli/                         standalone test CLI
 core/                        long-lived JSON-over-stdio core process
@@ -175,7 +197,8 @@ third_party/nlohmann/        vendored JSON header
 1. Add the Windows-specific hardlink and long-path backend and run the suite in
    a Windows CI runner.
 2. Route single-mod activation, symlink and move deployment through the core.
-3. Embed the platform core binary in the packaged app.
-4. Move index ownership into the shared mod-management core, then add conflict
-   detection and incremental deployment on top of it.
-5. Add the game/engine plugin host and `game.toml` descriptor loader.
+3. Move archive extraction into the core (spawning the existing 7-Zip binary)
+   so `InstallManager` no longer orchestrates extraction in the renderer.
+4. Move dependency resolution and collection phase scheduling into the core,
+   leaving the renderer with UI state only.
+5. Add the `game.toml` descriptor loader and the first-party module/plugin host.

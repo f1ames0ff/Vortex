@@ -1,6 +1,11 @@
 /** Main-process IPC surface for the native deployment core. */
 
-import type { NativeDeployRequest, NativePurgeRequest } from "@vortex/shared/ipc";
+import type {
+  NativeDeployRequest,
+  NativeInstallRequest,
+  NativePurgeRequest,
+  NativeStagingRequest,
+} from "@vortex/shared/ipc";
 import { app } from "electron";
 
 import { betterIpcMain } from "../ipc";
@@ -39,6 +44,14 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle("nativeDeploy:purge", (_event, request: NativePurgeRequest) =>
     nativeCoreClient().purge(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:stagingStatus", (_event, request: NativeStagingRequest) =>
+    nativeCoreClient().stagingStatus(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:installApply", (_event, request: NativeInstallRequest) =>
+    nativeCoreClient().installApply(request),
   );
 }
 

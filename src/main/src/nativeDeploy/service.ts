@@ -18,8 +18,12 @@ import type {
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeployStatus,
+  NativeInstallRequest,
+  NativeInstallResult,
   NativePurgeRequest,
   NativePurgeResult,
+  NativeStagingRequest,
+  NativeStagingResult,
 } from "@vortex/shared/ipc";
 
 import { log } from "../logging";
@@ -144,6 +148,14 @@ export class NativeCoreClient {
 
   purge(request: NativePurgeRequest): Promise<NativePurgeResult> {
     return this.#request("purge", request);
+  }
+
+  stagingStatus(request: NativeStagingRequest): Promise<NativeStagingResult> {
+    return this.#request("staging.status", request);
+  }
+
+  installApply(request: NativeInstallRequest): Promise<NativeInstallResult> {
+    return this.#request("install.apply", request);
   }
 
   /** Stop the core process and reject anything still in flight. */

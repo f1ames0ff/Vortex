@@ -105,3 +105,72 @@ export interface NativeDeployStatus {
   version?: string;
   error?: string;
 }
+
+/** Staging-folder state reported by the core. */
+export type NativeModStatus = "ok" | "empty" | "missing" | "error";
+
+export interface NativeStagingMod {
+  /** Caller's mod id; defaults to `installationPath` in the core. */
+  id?: string;
+  /** Path relative to `staging`. */
+  installationPath: string;
+}
+
+export interface NativeStagingRequest {
+  staging: string;
+  mods: NativeStagingMod[];
+}
+
+export interface NativeStagingModResult {
+  id: string;
+  installationPath: string;
+  status: NativeModStatus;
+  entries: number;
+  error?: string;
+}
+
+export interface NativeStagingResult {
+  mods: NativeStagingModResult[];
+}
+
+export type NativeInstallInstructionType = "mkdir" | "copy" | "hardlink" | "write";
+
+export interface NativeInstallInstruction {
+  type: NativeInstallInstructionType;
+  /** Relative to the extracted archive directory for copy/hardlink. */
+  source?: string;
+  /** Relative to the mod's staging destination. */
+  destination: string;
+  /** Raw content for write instructions. */
+  data?: string;
+  /** Skip a missing source instead of reporting a failure. */
+  optional?: boolean;
+}
+
+export interface NativeInstallRequest {
+  temp: string;
+  destination: string;
+  instructions: NativeInstallInstruction[];
+  /** Directory for the JSONL install journal; omitted keeps no journal. */
+  journalDir?: string;
+  concurrency?: number;
+}
+
+export interface NativeInstallFailure {
+  source: string;
+  destination: string;
+  message: string;
+}
+
+export interface NativeInstallReport {
+  directories: number;
+  linked: number;
+  copied: number;
+  written: number;
+  failures: NativeInstallFailure[];
+}
+
+export interface NativeInstallResult {
+  report: NativeInstallReport;
+  operation: string;
+}

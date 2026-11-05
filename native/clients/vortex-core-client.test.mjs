@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -51,4 +51,48 @@ test("deploys through the core process and purges", async () => {
   const purged = await client.request("purge", common);
   assert.equal(purged.report.restored, 1);
   assert.equal(readFileSync(join(target, "a.txt"), "utf8"), "game-a");
+});
+
+test("reports staging status without walking it in the renderer", async () => {
+  const result = await client.stagingStatus({
+    staging,
+    mods: [
+      { id: "mod-a", installationPath: "ModA" },
+      { id: "missing", installationPath: "MissingMod" },
+    ],
+  });
+
+  assert.equal(result.mods.length, 2);
+  assert.equal(result.mods[0].status, "ok");
+  assert.equal(result.mods[0].entries, 1);
+  assert.equal(result.mods[1].status, "missing");
+});
+
+test("applies generic installer instructions in the core", async () => {
+  const temp = join(root, "install-temp");
+  const destination = join(root, "install-destination");
+  const journalDir = join(root, "install-journal");
+  mkdirSync(join(temp, "nested"), { recursive: true });
+  writeFileSync(join(temp, "a.txt"), "a");
+  writeFileSync(join(temp, "nested", "b.txt"), "b");
+
+  const result = await client.installApply({
+    temp,
+    destination,
+    journalDir,
+    instructions: [
+      { type: "hardlink", source: "a.txt", destination: "a.txt" },
+      { type: "copy", source: "nested/b.txt", destination: "nested/b.txt" },
+      { type: "write", destination: "generated.txt", data: "hello" },
+    ],
+  });
+
+  assert.deepEqual(result.report.failures, []);
+  assert.equal(result.report.linked, 1);
+  assert.equal(result.report.copied, 1);
+  assert.equal(result.report.written, 1);
+  assert.equal(readFileSync(join(destination, "a.txt"), "utf8"), "a");
+  assert.equal(readFileSync(join(destination, "nested", "b.txt"), "utf8"), "b");
+  assert.equal(readFileSync(join(destination, "generated.txt"), "utf8"), "hello");
+  assert.ok(existsSync(join(journalDir, `${result.operation}.jsonl`)));
 });

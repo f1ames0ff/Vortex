@@ -11,6 +11,9 @@ import type {
   NativeDeployRequest,
   NativeDeployStatus,
   NativeDeployedFile,
+  NativeInstallRequest,
+  NativeInstallResult,
+  NativeModStatus,
 } from "@vortex/shared/ipc";
 
 import { log } from "../../../logging";
@@ -56,6 +59,50 @@ export async function canDeployNatively(method: IDeploymentMethod): Promise<bool
   }
   const status = await nativeDeployStatus();
   return status.enabled && status.available;
+}
+
+/**
+ * Check many staging folders in the core process. Returns `undefined` when
+ * the native path is disabled, so callers can fall back to their local walk.
+ */
+export async function inspectStagingNatively(
+  stagingPath: string,
+  mods: Array<{ id: string; installationPath?: string }>,
+): Promise<Map<string, NativeModStatus> | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available) {
+    return undefined;
+  }
+
+  const queries = mods
+    .filter(
+      (mod): mod is { id: string; installationPath: string } =>
+        mod.installationPath !== undefined && mod.installationPath !== "",
+    )
+    .map((mod) => ({ id: mod.id, installationPath: mod.installationPath }));
+  if (queries.length === 0) {
+    return new Map();
+  }
+
+  const result = await window.api.nativeDeploy.stagingStatus({
+    staging: stagingPath,
+    mods: queries,
+  });
+  return new Map(result.mods.map((mod) => [mod.id, mod.status]));
+}
+
+/**
+ * Apply generic installer instructions in the core. Returns `undefined` when
+ * the native path is disabled; FOMOD choice resolution stays in the caller.
+ */
+export async function applyInstallNatively(
+  request: NativeInstallRequest,
+): Promise<NativeInstallResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.installApply(request);
 }
 
 function toDeployedFile(file: NativeDeployedFile): IDeployedFile {

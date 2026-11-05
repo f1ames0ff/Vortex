@@ -34,14 +34,23 @@ target_include_directories(vortex_deployment
         third_party
 )
 
+find_package(Threads REQUIRED)
+
+add_library(vortex_core
+    src/install.cpp
+    src/status.cpp
+)
+target_link_libraries(vortex_core PUBLIC vortex_deployment Threads::Threads)
+target_include_directories(vortex_core PUBLIC include)
+
 add_executable(vortex-deploy cli/main.cpp)
 target_link_libraries(vortex-deploy PRIVATE vortex_deployment)
 
 add_executable(vortex-core core/main.cpp)
-target_link_libraries(vortex-core PRIVATE vortex_deployment)
+target_link_libraries(vortex-core PRIVATE vortex_core)
 
 add_executable(vortex-deployment-tests tests/main.cpp)
-target_link_libraries(vortex-deployment-tests PRIVATE vortex_deployment)
+target_link_libraries(vortex-deployment-tests PRIVATE vortex_core)
 
 enable_testing()
 add_test(NAME vortex-deployment-tests COMMAND vortex-deployment-tests)
