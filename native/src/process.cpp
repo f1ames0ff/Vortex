@@ -10,10 +10,15 @@
 #include <windows.h>
 #else
 #include <cerrno>
+#include <csignal>
+#include <fcntl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+
+#include <chrono>
+#include <thread>
 
 namespace vortex::core {
 
@@ -63,7 +68,8 @@ std::wstring widen(const std::string& value) {
 } // namespace
 
 ProcessResult runProcess(const std::filesystem::path& executable,
-                         const std::vector<std::string>& arguments) {
+                         const std::vector<std::string>& arguments,
+                         const std::atomic<bool>* cancel) {
     ProcessResult result;
 
 #ifdef _WIN32
@@ -105,12 +111,33 @@ ProcessResult runProcess(const std::filesystem::path& executable,
 
     char buffer[4096];
     DWORD read = 0;
-    while (ReadFile(readPipe, buffer, sizeof(buffer), &read, nullptr) != 0 && read > 0) {
+    bool terminated = false;
+    for (;;) {
+        DWORD available = 0;
+        if (PeekNamedPipe(readPipe, nullptr, 0, nullptr, &available, nullptr) != 0 &&
+            available > 0) {
+            if (ReadFile(readPipe, buffer, sizeof(buffer), &read, nullptr) != 0 && read > 0) {
+                result.output.append(buffer, read);
+                continue;
+            }
+        }
+        if (cancel != nullptr && cancel->load() && !terminated) {
+            TerminateProcess(process.hProcess, 1);
+            terminated = true;
+            result.cancelled = true;
+        }
+        if (WaitForSingleObject(process.hProcess, 20) == WAIT_OBJECT_0) {
+            break;
+        }
+    }
+    DWORD remaining = 0;
+    while (PeekNamedPipe(readPipe, nullptr, 0, nullptr, &remaining, nullptr) != 0 &&
+           remaining > 0 &&
+           ReadFile(readPipe, buffer, sizeof(buffer), &read, nullptr) != 0 && read > 0) {
         result.output.append(buffer, read);
     }
     CloseHandle(readPipe);
 
-    WaitForSingleObject(process.hProcess, INFINITE);
     DWORD exitCode = 0;
     GetExitCodeProcess(process.hProcess, &exitCode);
     result.exitCode = static_cast<int>(exitCode);
@@ -151,29 +178,53 @@ ProcessResult runProcess(const std::filesystem::path& executable,
     }
 
     ::close(pipeDescriptors[1]);
+    const auto flags = ::fcntl(pipeDescriptors[0], F_GETFL, 0);
+    if (flags >= 0) {
+        ::fcntl(pipeDescriptors[0], F_SETFL, flags | O_NONBLOCK);
+    }
+
     char buffer[4096];
+    bool terminated = false;
+    auto killDeadline = std::chrono::steady_clock::time_point{};
+    int status = 0;
+    for (;;) {
+        for (;;) {
+            const auto count = ::read(pipeDescriptors[0], buffer, sizeof(buffer));
+            if (count > 0) {
+                result.output.append(buffer, static_cast<std::size_t>(count));
+                continue;
+            }
+            break;
+        }
+
+        if (cancel != nullptr && cancel->load() && !terminated) {
+            ::kill(pid, SIGTERM);
+            terminated = true;
+            result.cancelled = true;
+            killDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        } else if (terminated && std::chrono::steady_clock::now() > killDeadline) {
+            ::kill(pid, SIGKILL);
+        }
+
+        const auto waited = ::waitpid(pid, &status, WNOHANG);
+        if (waited == pid) {
+            break;
+        }
+        if (waited < 0 && errno != EINTR) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
     for (;;) {
         const auto count = ::read(pipeDescriptors[0], buffer, sizeof(buffer));
         if (count > 0) {
             result.output.append(buffer, static_cast<std::size_t>(count));
             continue;
         }
-        if (count == 0) {
-            break;
-        }
-        if (errno == EINTR) {
-            continue;
-        }
         break;
     }
     ::close(pipeDescriptors[0]);
 
-    int status = 0;
-    while (::waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) {
-            throw std::system_error(errno, std::generic_category(), "waitpid");
-        }
-    }
     if (WIFEXITED(status)) {
         result.exitCode = WEXITSTATUS(status);
     } else if (WIFSIGNALED(status)) {

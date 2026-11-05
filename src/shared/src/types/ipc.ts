@@ -38,6 +38,9 @@ import type {
   NativeCollectionStartResult,
   NativeDepsRequest,
   NativeDepsResolveResult,
+  NativeDownloadListResult,
+  NativeDownloadRequest,
+  NativeDownloadStatus,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
@@ -445,6 +448,12 @@ export interface InvokeChannels {
   ) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionPause": (jobId: string) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionCancel": (jobId: string) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:downloadAdd": (request: NativeDownloadRequest) => Promise<NativeDownloadStatus>;
+  "nativeDeploy:downloadStatus": (id: string) => Promise<NativeDownloadStatus>;
+  "nativeDeploy:downloadList": () => Promise<NativeDownloadListResult>;
+  "nativeDeploy:downloadPause": (id: string) => Promise<NativeDownloadStatus>;
+  "nativeDeploy:downloadResume": (id: string) => Promise<NativeDownloadStatus>;
+  "nativeDeploy:downloadCancel": (id: string) => Promise<NativeDownloadStatus>;
 
   // bsdiff binary patching, run on a main-process worker_thread (only paths cross IPC)
   "bsdiff:create": (oldPath: string, newPath: string, patchPath: string) => Promise<void>;

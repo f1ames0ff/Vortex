@@ -7,6 +7,7 @@
 #include "vortex/core/archive.hpp"
 #include "vortex/core/collection.hpp"
 #include "vortex/core/deps.hpp"
+#include "vortex/core/download.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/plugins.hpp"
@@ -40,6 +41,14 @@ struct Request {
 struct CoreState {
     std::map<std::string, std::unique_ptr<IndexStore>> indexes;
     vortex::core::CollectionJobs collectionJobs;
+    std::unique_ptr<vortex::core::DownloadQueue> downloads;
+
+    vortex::core::DownloadQueue& downloadQueue() {
+        if (downloads == nullptr) {
+            downloads = std::make_unique<vortex::core::DownloadQueue>();
+        }
+        return *downloads;
+    }
 };
 
 IndexStore& indexFor(CoreState& state, const fs::path& stagingPath) {
@@ -563,6 +572,61 @@ json dependenciesJson(const std::vector<vortex::core::DependencyEntry>& entries)
     return result;
 }
 
+json downloadStatusJson(const vortex::core::DownloadStatus& status) {
+    json value = {
+        {"id", status.id},
+        {"state", status.state},
+        {"fileName", status.fileName},
+        {"url", status.url},
+        {"bytes", status.bytes},
+        {"attempts", status.attempts},
+        {"fromCache", status.fromCache},
+        {"startedAt", status.startedAt},
+        {"finishedAt", status.finishedAt},
+    };
+    if (!status.error.empty()) {
+        value["error"] = status.error;
+    }
+    return value;
+}
+
+vortex::core::DownloadRequest readDownloadRequest(const json& params) {
+    vortex::core::DownloadRequest request;
+    request.id = params.value("id", std::string{});
+    request.directory = pathFromUtf8(params.value("directory", std::string{}));
+    request.fileName = params.value("fileName", std::string{});
+    request.urls = stringArray(params, "urls");
+    request.referer = params.value("referer", std::string{});
+    request.curlPath = pathFromUtf8(params.value("curl", std::string("curl")));
+    request.maxRetries = params.value("maxRetries", 3);
+    request.concurrency = params.value("concurrency", 3);
+
+    if (params.contains("headers")) {
+        const auto& headers = params["headers"];
+        if (headers.is_object()) {
+            for (auto iterator = headers.begin(); iterator != headers.end(); ++iterator) {
+                if (!iterator.value().is_string()) {
+                    throw std::runtime_error("download header values must be strings");
+                }
+                request.headers.emplace_back(iterator.key(), iterator.value().get<std::string>());
+            }
+        } else if (headers.is_array()) {
+            for (const auto& header : headers) {
+                if (!header.is_object() || !header.contains("name") ||
+                    !header.contains("value")) {
+                    throw std::runtime_error(
+                        "each download header must have name and value");
+                }
+                request.headers.emplace_back(header["name"].get<std::string>(),
+                                             header["value"].get<std::string>());
+            }
+        } else {
+            throw std::runtime_error("download headers must be an object or array");
+        }
+    }
+    return request;
+}
+
 json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
     json value = {
         {"ruleIndex", member.ruleIndex},
@@ -637,8 +701,9 @@ json dispatch(CoreState& state, const Request& request) {
               "archive.list", "archive.extract", "hash.files", "deps.matchMod",
               "deps.matchDownload", "deps.resolve", "collection.plan", "collection.start",
               "collection.status", "collection.next", "collection.member", "collection.pause",
-              "collection.cancel", "plugins.scan", "plugins.loadOrder.read",
-              "plugins.loadOrder.write", "plan", "deploy", "deploy.symlink", "purge"}},
+              "collection.cancel", "download.queue", "plugins.scan",
+              "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
+              "deploy.symlink", "purge"}},
             {"pid", 0},
         };
     }
@@ -757,6 +822,47 @@ json dispatch(CoreState& state, const Request& request) {
         }
         const auto plan = vortex::core::planCollection(rules, mods, downloads);
         return collectionPlanJson(plan);
+    }
+
+    if (request.method == "download.add") {
+        const auto id = state.downloadQueue().add(readDownloadRequest(params));
+        return downloadStatusJson(*state.downloadQueue().status(id));
+    }
+
+    if (request.method == "download.status" || request.method == "download.pause" ||
+        request.method == "download.resume" || request.method == "download.cancel") {
+        const auto id = params.value("id", std::string{});
+        if (id.empty()) {
+            throw std::runtime_error("params.id is required");
+        }
+        auto& queue = state.downloadQueue();
+        if (request.method == "download.status") {
+            const auto status = queue.status(id);
+            if (!status.has_value()) {
+                throw std::runtime_error("unknown download: " + id);
+            }
+            return downloadStatusJson(*status);
+        }
+        if (request.method == "download.pause") {
+            queue.pause(id);
+        } else if (request.method == "download.resume") {
+            queue.resume(id);
+        } else {
+            queue.cancel(id);
+        }
+        const auto status = queue.status(id);
+        if (!status.has_value()) {
+            throw std::runtime_error("unknown download: " + id);
+        }
+        return downloadStatusJson(*status);
+    }
+
+    if (request.method == "download.list") {
+        json downloads = json::array();
+        for (const auto& status : state.downloadQueue().list()) {
+            downloads.push_back(downloadStatusJson(status));
+        }
+        return {{"downloads", std::move(downloads)}};
     }
 
     if (request.method == "collection.start") {

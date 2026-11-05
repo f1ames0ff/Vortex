@@ -205,6 +205,7 @@ import modName, { renderModReference } from "./util/modName";
 import {
   applyInstallNatively,
   cancelCollectionJobNatively,
+  downloadFileNatively,
   extractArchiveNatively,
   nextCollectionMembersNatively,
   startCollectionNatively,
@@ -5621,92 +5622,193 @@ class InstallManager {
     return call(lookupResult.sourceURI)
       .then((res) => (resolvedSource = res))
       .then(() => call(lookupResult.referer).then((res) => (resolvedReferer = res)))
-      .then(
-        () =>
-          new Promise<string>((resolve, reject) => {
-            if (wasCanceled()) {
-              return reject(new UserCanceled(false));
-            } else if (!truthy(resolvedSource)) {
-              return reject(new UserCanceled(true));
-            }
-            const parsedUrl = new URL(resolvedSource);
-            if (campaign !== undefined && parsedUrl.protocol === "nxm:") {
-              parsedUrl.searchParams.set("campaign", campaign);
-            }
+      .then(async () => {
+        if (!wasCanceled() && truthy(resolvedSource)) {
+          const nativeId = await this.tryNativeDownload(
+            api,
+            resolvedSource,
+            resolvedReferer,
+            lookupResult,
+            referenceTag,
+            campaign,
+            fileName,
+            parentCollection,
+          ).catch((err) => {
+            log("warn", "native dependency download failed, falling back", {
+              error: getErrorMessageOrDefault(err),
+            });
+            return undefined;
+          });
+          if (nativeId !== undefined) {
+            return nativeId;
+          }
+        }
+        return new Promise<string>((resolve, reject) => {
+          if (wasCanceled()) {
+            return reject(new UserCanceled(false));
+          } else if (!truthy(resolvedSource)) {
+            return reject(new UserCanceled(true));
+          }
+          const parsedUrl = new URL(resolvedSource);
+          if (campaign !== undefined && parsedUrl.protocol === "nxm:") {
+            parsedUrl.searchParams.set("campaign", campaign);
+          }
 
-            const startDownloadModInfo: any = {
-              game: convertGameIdReverse(knownGames(api.store.getState()), lookupResult.domainName),
-              source: lookupResult.source,
-              name: lookupResult.logicalFileName,
-              referer: resolvedReferer,
-              referenceTag,
-              meta: lookupResult,
+          const startDownloadModInfo: any = {
+            game: convertGameIdReverse(knownGames(api.store.getState()), lookupResult.domainName),
+            source: lookupResult.source,
+            name: lookupResult.logicalFileName,
+            referer: resolvedReferer,
+            referenceTag,
+            meta: lookupResult,
+          };
+          if (parentCollection !== undefined) {
+            // Tag the download with the parent collection's id and revision for analytics only.
+            // Kept off `nexus.ids.collectionId` because the install attribute
+            // extractor copies that field onto the installed mod, which would
+            // make a regular mod look like a collection downstream.
+            startDownloadModInfo.nexus = {
+              parentCollectionId: parentCollection.collectionId,
+              parentRevisionId: parentCollection.revisionId,
             };
-            if (parentCollection !== undefined) {
-              // Tag the download with the parent collection's id and revision for analytics only.
-              // Kept off `nexus.ids.collectionId` because the install attribute
-              // extractor copies that field onto the installed mod, which would
-              // make a regular mod look like a collection downstream.
-              startDownloadModInfo.nexus = {
-                parentCollectionId: parentCollection.collectionId,
-                parentRevisionId: parentCollection.revisionId,
-              };
-            }
+          }
 
-            if (
-              !api.events.emit(
-                "start-download",
-                [parsedUrl],
-                startDownloadModInfo,
-                fileName,
-                async (error, id) => {
-                  if (error == null) {
-                    return resolve(id);
-                  } else if (error instanceof AlreadyDownloaded) {
-                    return resolve(error.downloadId);
-                  } else if (parseError(error).data.kind === "download:is-html") {
-                    // If this is a google drive link and the file exceeds the
-                    //  virus testing limit, Google will return an HTML page asking
-                    //  the user for consent to download the file. Lets try this using
-                    //  the browser extension.
-                    const instructions =
-                      `You are trying to download "${lookupResult.fileName}" from "${resolvedSource}".\n` +
-                      "Depending on the portal, you may be re-directed several times.";
-                    const result: string[] = await api.emitAndAwait(
-                      "browse-for-download",
-                      resolvedSource,
-                      instructions,
+          if (
+            !api.events.emit(
+              "start-download",
+              [parsedUrl],
+              startDownloadModInfo,
+              fileName,
+              async (error, id) => {
+                if (error == null) {
+                  return resolve(id);
+                } else if (error instanceof AlreadyDownloaded) {
+                  return resolve(error.downloadId);
+                } else if (parseError(error).data.kind === "download:is-html") {
+                  // If this is a google drive link and the file exceeds the
+                  //  virus testing limit, Google will return an HTML page asking
+                  //  the user for consent to download the file. Lets try this using
+                  //  the browser extension.
+                  const instructions =
+                    `You are trying to download "${lookupResult.fileName}" from "${resolvedSource}".\n` +
+                    "Depending on the portal, you may be re-directed several times.";
+                  const result: string[] = await api.emitAndAwait(
+                    "browse-for-download",
+                    resolvedSource,
+                    instructions,
+                  );
+                  if (result.length > 0) {
+                    const newLookupRes = {
+                      ...lookupResult,
+                      sourceURI: result[0],
+                    };
+                    const id = await this.downloadURL(
+                      api,
+                      newLookupRes,
+                      wasCanceled,
+                      referenceTag,
+                      campaign,
+                      fileName,
+                      parentCollection,
                     );
-                    if (result.length > 0) {
-                      const newLookupRes = {
-                        ...lookupResult,
-                        sourceURI: result[0],
-                      };
-                      const id = await this.downloadURL(
-                        api,
-                        newLookupRes,
-                        wasCanceled,
-                        referenceTag,
-                        campaign,
-                        fileName,
-                        parentCollection,
-                      );
-                      return resolve(id);
-                    } else {
-                      return reject(new UserCanceled());
-                    }
+                    return resolve(id);
                   } else {
-                    return reject(error);
+                    return reject(new UserCanceled());
                   }
-                },
-                "never",
-                { allowInstall: false, allowOpenHTML: false },
-              )
-            ) {
-              return reject(new Error("download manager not installed?"));
-            }
-          }),
+                } else {
+                  return reject(error);
+                }
+              },
+              "never",
+              { allowInstall: false, allowOpenHTML: false },
+            )
+          ) {
+            return reject(new Error("download manager not installed?"));
+          }
+        });
+      });
+  }
+
+  private async tryNativeDownload(
+    api: IExtensionApi,
+    source: string,
+    referer: string | undefined,
+    lookupResult: IModInfoEx,
+    referenceTag: string | undefined,
+    campaign: string | undefined,
+    fileName: string | undefined,
+    parentCollection: IParentCollection | undefined,
+  ): Promise<string | undefined> {
+    if (fileName === undefined) {
+      return undefined;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(source);
+    } catch {
+      return undefined;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return undefined;
+    }
+    if (campaign !== undefined) {
+      parsed.searchParams.set("campaign", campaign);
+    }
+
+    const state = api.getState();
+    const gameId = convertGameIdReverse(knownGames(state), lookupResult.domainName);
+    if (gameId === undefined) {
+      return undefined;
+    }
+    const downloadPath = downloadPathForGame(state, gameId);
+    const directory = path.join(downloadPath, ".vortex-native", shortid());
+    const result = await downloadFileNatively({
+      directory,
+      fileName,
+      urls: [parsed.toString()],
+      referer,
+    });
+    if (result === undefined) {
+      await fs.removeAsync(directory).catch(() => undefined);
+      return undefined;
+    }
+
+    const downloadId = await new Promise<string | undefined>((resolve) => {
+      api.events.emit(
+        "import-downloads",
+        [result.path],
+        (dlIds: string[]) => resolve(dlIds.find((id) => id !== undefined)),
+        true,
       );
+    });
+    await fs.removeAsync(directory).catch(() => undefined);
+    if (downloadId === undefined) {
+      return undefined;
+    }
+
+    const modInfo: Record<string, unknown> = {
+      game: gameId,
+      source: lookupResult.source,
+      name: lookupResult.logicalFileName,
+      referer,
+      referenceTag,
+      meta: lookupResult,
+    };
+    const actions = Object.entries(modInfo)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => setDownloadModInfo(downloadId, key, value));
+    if (parentCollection !== undefined) {
+      actions.push(
+        setDownloadModInfo(downloadId, "nexus.parentCollectionId", parentCollection.collectionId),
+      );
+      if (parentCollection.revisionId !== undefined) {
+        actions.push(
+          setDownloadModInfo(downloadId, "nexus.parentRevisionId", parentCollection.revisionId),
+        );
+      }
+    }
+    batchDispatch(api.store, actions);
+    return downloadId;
   }
 
   private downloadMatching(

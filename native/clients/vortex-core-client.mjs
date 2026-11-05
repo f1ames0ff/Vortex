@@ -121,6 +121,30 @@ export class VortexCoreClient {
     return this.request("collection.cancel", { jobId });
   }
 
+  downloadAdd(request) {
+    return this.request("download.add", request);
+  }
+
+  downloadStatus(id) {
+    return this.request("download.status", { id });
+  }
+
+  downloadList() {
+    return this.request("download.list", {});
+  }
+
+  downloadPause(id) {
+    return this.request("download.pause", { id });
+  }
+
+  downloadResume(id) {
+    return this.request("download.resume", { id });
+  }
+
+  downloadCancel(id) {
+    return this.request("download.cancel", { id });
+  }
+
   request(method, params = {}) {
     const id = this.#nextId++;
     const request = { id, method, params };

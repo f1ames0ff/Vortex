@@ -6,6 +6,8 @@
  * feature-flagged native path may be used for the current deployment method.
  */
 
+import * as path from "node:path";
+
 import { getErrorMessageOrDefault } from "@vortex/shared";
 import type {
   NativeCollectionJobMember,
@@ -19,6 +21,8 @@ import type {
   NativeDeployStatus,
   NativeDeployedFile,
   NativeDownloadInfo,
+  NativeDownloadRequest,
+  NativeDownloadStatus,
   NativeHashAlgorithm,
   NativeInstallRequest,
   NativeInstallResult,
@@ -384,6 +388,45 @@ export async function cancelCollectionJobNatively(
     return undefined;
   }
   return window.api.nativeDeploy.collectionCancel(jobId);
+}
+
+/**
+ * Download a direct HTTP(S) URL through the core queue and wait for it to
+ * settle. Returns the final path, or `undefined` when the native path is
+ * unavailable or the transfer failed (the caller can fall back).
+ */
+export async function downloadFileNatively(
+  request: NativeDownloadRequest,
+  pollMs: number = 200,
+): Promise<{ path: string; status: NativeDownloadStatus } | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "download.queue")) {
+    return undefined;
+  }
+
+  let id: string;
+  try {
+    const added = await window.api.nativeDeploy.downloadAdd(request);
+    id = added.id;
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+
+  for (;;) {
+    const current = await window.api.nativeDeploy.downloadStatus(id);
+    if (current.state === "finished") {
+      return { path: path.join(request.directory, request.fileName), status: current };
+    }
+    if (current.state === "failed" || current.state === "cancelled") {
+      // Remove the partial file so a fallback transfer starts clean.
+      await window.api.nativeDeploy.downloadCancel(id).catch(() => undefined);
+      return undefined;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
 }
 
 /**

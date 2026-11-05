@@ -9,6 +9,7 @@ import type {
   NativeCollectionStartRequest,
   NativeDepsRequest,
   NativeDeployRequest,
+  NativeDownloadRequest,
   NativePluginOrderRequest,
   NativePluginOrderWriteRequest,
   NativePluginScanRequest,
@@ -147,6 +148,26 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle("nativeDeploy:collectionCancel", (_event, jobId: string) =>
     nativeCoreClient().collectionCancel(jobId),
+  );
+
+  betterIpcMain.handle("nativeDeploy:downloadAdd", (_event, request: NativeDownloadRequest) =>
+    nativeCoreClient().downloadAdd({
+      curl: process.env.VORTEX_CURL_PATH ?? "curl",
+      ...request,
+    }),
+  );
+  betterIpcMain.handle("nativeDeploy:downloadStatus", (_event, id: string) =>
+    nativeCoreClient().downloadStatus(id),
+  );
+  betterIpcMain.handle("nativeDeploy:downloadList", () => nativeCoreClient().downloadList());
+  betterIpcMain.handle("nativeDeploy:downloadPause", (_event, id: string) =>
+    nativeCoreClient().downloadPause(id),
+  );
+  betterIpcMain.handle("nativeDeploy:downloadResume", (_event, id: string) =>
+    nativeCoreClient().downloadResume(id),
+  );
+  betterIpcMain.handle("nativeDeploy:downloadCancel", (_event, id: string) =>
+    nativeCoreClient().downloadCancel(id),
   );
 }
 

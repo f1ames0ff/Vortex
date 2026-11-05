@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -304,4 +305,128 @@ test("lists and extracts archives through 7-Zip", { skip: !existsSync(sevenZip) 
   assert.equal(extraction.code, 0);
   assert.deepEqual(extraction.errors, []);
   assert.equal(readFileSync(join(destination, "a.txt"), "utf8"), "mod-a");
+});
+
+async function waitForState(downloadId, wanted, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = await client.downloadStatus(downloadId);
+    if (wanted.includes(status.state)) {
+      return status;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`download ${downloadId} stayed ${status.state}: ${status.error ?? ""}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
+test("downloads over HTTP with pause/resume", async () => {
+  const payload = Buffer.alloc(256 * 1024);
+  for (let index = 0; index < payload.length; ++index) {
+    payload[index] = index % 251;
+  }
+  const server = createServer((request, response) => {
+    const range = /^bytes=(\d+)-/.exec(request.headers.range ?? "");
+    const start = range === null ? 0 : Number(range[1]);
+    const slice = payload.subarray(start);
+    if (range === null) {
+      response.writeHead(200, {
+        "content-length": slice.length,
+        "accept-ranges": "bytes",
+      });
+      response.write(slice.subarray(0, 32 * 1024));
+      setTimeout(() => response.end(slice.subarray(32 * 1024)), 3000);
+    } else {
+      response.writeHead(206, {
+        "content-length": slice.length,
+        "accept-ranges": "bytes",
+        "content-range": `bytes ${start}-${payload.length - 1}/${payload.length}`,
+      });
+      response.end(slice);
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${server.address().port}/mod.zip`;
+
+  try {
+    const directory = join(root, "downloads");
+    const started = await client.downloadAdd({
+      id: "dl-http",
+      directory,
+      fileName: "mod.zip",
+      urls: [url],
+      curl: process.env.VORTEX_CURL_PATH ?? "curl",
+      maxRetries: 1,
+    });
+    assert.ok(["queued", "downloading"].includes(started.state));
+
+    let status = await waitForState("dl-http", ["downloading", "finished"]);
+    const deadline = Date.now() + 5000;
+    while (status.bytes === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      status = await client.downloadStatus("dl-http");
+    }
+    assert.ok(status.bytes > 0, "download made progress");
+
+    await client.downloadPause("dl-http");
+    status = await waitForState("dl-http", ["paused"]);
+    const pausedBytes = status.bytes;
+    assert.ok(pausedBytes > 0 && pausedBytes < payload.length, "download is partial");
+
+    await client.downloadResume("dl-http");
+    status = await waitForState("dl-http", ["finished"]);
+    assert.equal(status.bytes, payload.length);
+    assert.equal(status.fromCache, false);
+    assert.deepEqual(readFileSync(join(directory, "mod.zip")), payload);
+    assert.equal(existsSync(join(directory, "mod.zip.part")), false);
+
+    const list = await client.downloadList();
+    assert.equal(list.downloads.find((entry) => entry.id === "dl-http").state, "finished");
+  } finally {
+    server.close();
+  }
+});
+
+test("reports failed downloads and cancels in-flight ones", async () => {
+  const server = createServer((request, response) => {
+    if (request.url === "/slow") {
+      response.writeHead(200, { "content-length": 1024 });
+      response.write(Buffer.alloc(16));
+      return;
+    }
+    response.writeHead(404);
+    response.end("missing");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    const directory = join(root, "downloads-fail");
+    await client.downloadAdd({
+      id: "dl-404",
+      directory,
+      fileName: "missing.zip",
+      urls: [`${base}/missing`],
+      curl: process.env.VORTEX_CURL_PATH ?? "curl",
+      maxRetries: 0,
+    });
+    const failed = await waitForState("dl-404", ["failed"]);
+    assert.ok(failed.error.length > 0, "failure carries an error");
+
+    await client.downloadAdd({
+      id: "dl-cancel",
+      directory,
+      fileName: "slow.zip",
+      urls: [`${base}/slow`],
+      curl: process.env.VORTEX_CURL_PATH ?? "curl",
+      maxRetries: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await client.downloadCancel("dl-cancel");
+    await waitForState("dl-cancel", ["cancelled"]);
+    assert.equal(existsSync(join(directory, "slow.zip.part")), false);
+  } finally {
+    server.close();
+  }
 });

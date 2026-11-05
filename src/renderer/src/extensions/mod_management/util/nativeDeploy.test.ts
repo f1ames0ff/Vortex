@@ -37,6 +37,7 @@ import {
   canDeployNatively,
   collectionStatusNatively,
   deployWithNativeCore,
+  downloadFileNatively,
   extractArchiveNatively,
   hashFilesNatively,
   inspectStagingNatively,
@@ -74,6 +75,12 @@ interface FakeNativeDeploy {
   collectionMember: ReturnType<typeof vi.fn>;
   collectionPause: ReturnType<typeof vi.fn>;
   collectionCancel: ReturnType<typeof vi.fn>;
+  downloadAdd: ReturnType<typeof vi.fn>;
+  downloadStatus: ReturnType<typeof vi.fn>;
+  downloadList: ReturnType<typeof vi.fn>;
+  downloadPause: ReturnType<typeof vi.fn>;
+  downloadResume: ReturnType<typeof vi.fn>;
+  downloadCancel: ReturnType<typeof vi.fn>;
 }
 
 let nativeDeploy: FakeNativeDeploy;
@@ -117,6 +124,12 @@ beforeEach(() => {
     collectionMember: vi.fn(),
     collectionPause: vi.fn(),
     collectionCancel: vi.fn(),
+    downloadAdd: vi.fn(),
+    downloadStatus: vi.fn(),
+    downloadList: vi.fn(),
+    downloadPause: vi.fn(),
+    downloadResume: vi.fn(),
+    downloadCancel: vi.fn(),
   };
   installApi(nativeDeploy);
   resetNativeDeployStatus();
@@ -595,5 +608,44 @@ describe("native staging adapter", () => {
       status: "installed",
       modId: "mod-a",
     });
+  });
+
+  it("downloads a direct URL through the core queue", async () => {
+    nativeDeploy.downloadAdd.mockResolvedValue({ id: "dl-1", state: "queued" });
+    nativeDeploy.downloadStatus
+      .mockResolvedValueOnce({ id: "dl-1", state: "downloading", bytes: 10 })
+      .mockResolvedValueOnce({ id: "dl-1", state: "finished", bytes: 20 });
+
+    const result = await downloadFileNatively(
+      {
+        directory: "/downloads/.native/1",
+        fileName: "mod.zip",
+        urls: ["https://example.com/mod.zip"],
+      },
+      1,
+    );
+
+    expect(nativeDeploy.downloadAdd).toHaveBeenCalledWith({
+      directory: "/downloads/.native/1",
+      fileName: "mod.zip",
+      urls: ["https://example.com/mod.zip"],
+    });
+    expect(result?.path).toBe("/downloads/.native/1/mod.zip");
+    expect(result?.status.state).toBe("finished");
+  });
+
+  it("cleans up a failed core download and lets the caller fall back", async () => {
+    nativeDeploy.downloadAdd.mockResolvedValue({ id: "dl-2", state: "queued" });
+    nativeDeploy.downloadStatus.mockResolvedValue({ id: "dl-2", state: "failed" });
+    nativeDeploy.downloadCancel.mockResolvedValue({ id: "dl-2", state: "cancelled" });
+
+    await expect(
+      downloadFileNatively({
+        directory: "/downloads/.native/2",
+        fileName: "bad.zip",
+        urls: ["https://example.com/bad.zip"],
+      }),
+    ).resolves.toBeUndefined();
+    expect(nativeDeploy.downloadCancel).toHaveBeenCalledWith("dl-2");
   });
 });

@@ -66,7 +66,13 @@ Supported requests:
 {"id":22,"method":"collection.status","params":{"jobId":"collection_..."}}
 {"id":23,"method":"collection.pause","params":{"jobId":"collection_..."}}
 {"id":24,"method":"collection.cancel","params":{"jobId":"collection_..."}}
-{"id":25,"method":"shutdown","params":{}}
+{"id":25,"method":"download.add","params":{"directory":"/downloads","fileName":"ModA.7z","urls":["https://example.com/ModA.7z"],"maxRetries":3}}
+{"id":26,"method":"download.status","params":{"id":"download_..."}}
+{"id":27,"method":"download.pause","params":{"id":"download_..."}}
+{"id":28,"method":"download.resume","params":{"id":"download_..."}}
+{"id":29,"method":"download.cancel","params":{"id":"download_..."}}
+{"id":30,"method":"download.list","params":{}}
+{"id":31,"method":"shutdown","params":{}}
 ```
 
 Every response echoes `id` and contains either `result` or `error`. Commands
@@ -127,6 +133,15 @@ extensions, preserving file-name casing while exposing the lower-case plugin
 id and ghost flag. `plugins.loadOrder.read`/`write` handle `plugins.txt` and
 `loadorder.txt`, including the `Plugins.txt` capitalisation the game creates in
 Proton prefixes, and write the Vortex header with CRLF rows atomically.
+
+`download.add` creates a core-owned queue entry; a scheduler thread starts up
+to `concurrency` transfers and the platform `curl` binary performs the
+transfer. The core owns retries, pause/resume (via `--continue-at`), cancel,
+progress bytes and the atomic `.part` -> final rename. Only `http(s)` URLs and
+safe relative file names are accepted; headers are checked for line breaks.
+`InstallManager` tries this path for direct HTTP(S) dependency downloads when a
+file name is known, imports the finished archive through `import-downloads`,
+and falls back to the existing download manager if the core transfer fails.
 
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.
@@ -220,6 +235,10 @@ fallback when the core is disabled or lacks a capability.
 Known integration gaps for the next slice:
 
 - Move deployment and single-mod activation still use the TypeScript path.
+- Downloads use the external `curl` binary. Linux distributions ship it;
+  Windows 10+ includes `curl.exe`. Set `VORTEX_CURL_PATH` to override the
+  binary. Nexus cookie/proxy-authenticated transfers still go through the
+  TypeScript downloader.
 - Exact skip-list entries are passed to the core; minimatch patterns from
   `ignoreDeploy` still rely on the TypeScript path.
 - The packaged app does not embed a Windows build of the core yet.
@@ -314,5 +333,7 @@ third_party/nlohmann/        vendored JSON header
 2. Route single-mod activation and move deployment through the core.
 3. Move the actual download/install executor behind `collection.next`
    workers, leaving `InstallDriver` as a view model.
-4. Move downloads and the download queue into the core.
+4. Route the main-process `DownloadManager` and proxy/cookie-aware Nexus
+   transfers through the core queue once the core can reuse the downloader's
+   authentication and header pipeline.
 5. Add the first-party module/plugin host on top of the game descriptors.

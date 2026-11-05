@@ -72,6 +72,12 @@ try {
         betterIpcRenderer.invoke("nativeDeploy:collectionMember", request),
       collectionPause: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionPause", jobId),
       collectionCancel: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionCancel", jobId),
+      downloadAdd: (request) => betterIpcRenderer.invoke("nativeDeploy:downloadAdd", request),
+      downloadStatus: (id) => betterIpcRenderer.invoke("nativeDeploy:downloadStatus", id),
+      downloadList: () => betterIpcRenderer.invoke("nativeDeploy:downloadList"),
+      downloadPause: (id) => betterIpcRenderer.invoke("nativeDeploy:downloadPause", id),
+      downloadResume: (id) => betterIpcRenderer.invoke("nativeDeploy:downloadResume", id),
+      downloadCancel: (id) => betterIpcRenderer.invoke("nativeDeploy:downloadCancel", id),
     },
 
     shell: {

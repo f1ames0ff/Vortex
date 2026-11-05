@@ -47,6 +47,9 @@ import type {
   NativeCollectionStartResult,
   NativeDepsRequest,
   NativeDepsResolveResult,
+  NativeDownloadListResult,
+  NativeDownloadRequest,
+  NativeDownloadStatus,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
@@ -685,6 +688,24 @@ export interface NativeDeployApi {
 
   /** Cancels a collection job. */
   collectionCancel(jobId: string): Promise<NativeCollectionJobStatus>;
+
+  /** Adds a download to the core-owned queue. */
+  downloadAdd(request: NativeDownloadRequest): Promise<NativeDownloadStatus>;
+
+  /** Reads one core download's state. */
+  downloadStatus(id: string): Promise<NativeDownloadStatus>;
+
+  /** Lists core-owned downloads. */
+  downloadList(): Promise<NativeDownloadListResult>;
+
+  /** Pauses a core download, keeping its partial file for resume. */
+  downloadPause(id: string): Promise<NativeDownloadStatus>;
+
+  /** Resumes or retries a paused/failed core download. */
+  downloadResume(id: string): Promise<NativeDownloadStatus>;
+
+  /** Cancels a core download and removes its partial file. */
+  downloadCancel(id: string): Promise<NativeDownloadStatus>;
 }
 
 export interface FeatureFlagsApi {

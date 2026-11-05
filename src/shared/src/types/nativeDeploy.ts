@@ -431,3 +431,41 @@ export interface NativeCollectionMemberUpdate {
   error?: string;
   retry?: boolean;
 }
+
+export interface NativeDownloadRequest {
+  id?: string;
+  directory: string;
+  fileName: string;
+  urls: string[];
+  headers?: Record<string, string>;
+  referer?: string;
+  /** Injected by main; defaults to curl on PATH. */
+  curl?: string;
+  maxRetries?: number;
+  concurrency?: number;
+}
+
+export type NativeDownloadState =
+  | "queued"
+  | "downloading"
+  | "paused"
+  | "finished"
+  | "failed"
+  | "cancelled";
+
+export interface NativeDownloadStatus {
+  id: string;
+  state: NativeDownloadState;
+  fileName: string;
+  url: string;
+  bytes: number;
+  attempts: number;
+  fromCache: boolean;
+  error?: string;
+  startedAt: number;
+  finishedAt: number;
+}
+
+export interface NativeDownloadListResult {
+  downloads: NativeDownloadStatus[];
+}

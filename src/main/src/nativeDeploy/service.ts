@@ -26,6 +26,9 @@ import type {
   NativeCollectionStartResult,
   NativeDepsRequest,
   NativeDepsResolveResult,
+  NativeDownloadListResult,
+  NativeDownloadRequest,
+  NativeDownloadStatus,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
@@ -240,6 +243,30 @@ export class NativeCoreClient {
 
   collectionCancel(jobId: string): Promise<NativeCollectionJobStatus> {
     return this.#request("collection.cancel", { jobId });
+  }
+
+  downloadAdd(request: NativeDownloadRequest): Promise<NativeDownloadStatus> {
+    return this.#request("download.add", request);
+  }
+
+  downloadStatus(id: string): Promise<NativeDownloadStatus> {
+    return this.#request("download.status", { id });
+  }
+
+  downloadList(): Promise<NativeDownloadListResult> {
+    return this.#request("download.list", {});
+  }
+
+  downloadPause(id: string): Promise<NativeDownloadStatus> {
+    return this.#request("download.pause", { id });
+  }
+
+  downloadResume(id: string): Promise<NativeDownloadStatus> {
+    return this.#request("download.resume", { id });
+  }
+
+  downloadCancel(id: string): Promise<NativeDownloadStatus> {
+    return this.#request("download.cancel", { id });
   }
 
   /** Stop the core process and reject anything still in flight. */

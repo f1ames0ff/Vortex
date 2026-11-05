@@ -7,6 +7,7 @@
 #include "vortex/core/archive.hpp"
 #include "vortex/core/collection.hpp"
 #include "vortex/core/deps.hpp"
+#include "vortex/core/download.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/plugins.hpp"
@@ -654,6 +655,52 @@ void testCollectionJobRetryAndStall() {
     check(stalledStatus["stalled"].get<bool>(), "stalled job reported");
 }
 
+void testDownloadValidation() {
+    vortex::core::DownloadQueue queue;
+    const auto directory = fs::temp_directory_path() / "vortex-download-validation";
+
+    vortex::core::DownloadRequest traversal;
+    traversal.directory = directory;
+    traversal.fileName = "../escape.zip";
+    traversal.urls = {"https://example.com/a.zip"};
+    bool rejectedTraversal = false;
+    try {
+        queue.add(traversal);
+    } catch (const std::exception&) {
+        rejectedTraversal = true;
+    }
+    check(rejectedTraversal, "download rejects path traversal");
+
+    vortex::core::DownloadRequest scheme;
+    scheme.directory = directory;
+    scheme.fileName = "a.zip";
+    scheme.urls = {"file:///etc/passwd"};
+    bool rejectedScheme = false;
+    try {
+        queue.add(scheme);
+    } catch (const std::exception&) {
+        rejectedScheme = true;
+    }
+    check(rejectedScheme, "download rejects non-http urls");
+
+    vortex::core::DownloadRequest request;
+    request.id = "duplicate";
+    request.directory = directory;
+    request.fileName = "a.zip";
+    request.urls = {"https://example.com/a.zip"};
+    request.curlPath = "/bin/false";
+    request.maxRetries = 0;
+    queue.add(request);
+    bool rejectedDuplicate = false;
+    try {
+        queue.add(request);
+    } catch (const std::exception&) {
+        rejectedDuplicate = true;
+    }
+    check(rejectedDuplicate, "download rejects duplicate id");
+    queue.cancel("duplicate");
+}
+
 void testPluginScan() {
     const auto root = makeRoot("plugins-scan");
     writeFile(root / "Skyrim.esm", "esm");
@@ -1069,6 +1116,7 @@ int main() {
         testPluginOrderCasingAndWrite();
         testCollectionJobQueue();
         testCollectionJobRetryAndStall();
+        testDownloadValidation();
         testTomlParsing();
         testGameDescriptorParsing();
         testMalformedToml();
