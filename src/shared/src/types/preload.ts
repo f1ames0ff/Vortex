@@ -39,6 +39,9 @@ import type {
   NativeArchiveExtractResult,
   NativeArchiveListRequest,
   NativeArchiveListResult,
+  NativeCollectionPlan,
+  NativeDepsRequest,
+  NativeDepsResolveResult,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
@@ -639,6 +642,12 @@ export interface NativeDeployApi {
 
   /** Hashes a batch of files off the renderer thread. */
   hashFiles(request: NativeHashFilesRequest): Promise<NativeHashFilesResult>;
+
+  /** Resolves collection/mod dependency rules in the core. */
+  depsResolve(request: NativeDepsRequest): Promise<NativeDepsResolveResult>;
+
+  /** Builds the phase/member plan for a collection in the core. */
+  collectionPlan(request: NativeDepsRequest): Promise<NativeCollectionPlan>;
 }
 
 export interface FeatureFlagsApi {

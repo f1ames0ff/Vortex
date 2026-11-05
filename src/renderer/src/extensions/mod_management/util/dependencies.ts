@@ -1,4 +1,5 @@
 import { unknownToError } from "@vortex/shared";
+import type { NativeDependencyEntry } from "@vortex/shared/ipc";
 import * as _ from "lodash";
 import minimatch from "minimatch";
 import type { ILookupResult, IReference, IRule } from "modmeta-db";
@@ -18,6 +19,7 @@ import type { IDependency, ILookupResultEx } from "../types/IDependency";
 import type { IDownloadHint, IMod, IModReference, IModRule } from "../types/IMod";
 import { findModByRef } from "./findModByRef";
 import { isFuzzyVersion } from "./isFuzzyVersion";
+import { resolveDependenciesNatively } from "./nativeDeploy";
 import { rulePhase } from "./rulePhase";
 import testModReference, {
   downloadReferenceTags,
@@ -355,12 +357,14 @@ async function gatherDependenciesGraph(
   gameMode: string,
   recommendations: boolean,
   addToCache?: (download: IDownload) => void,
+  resolved?: NativeDependencyEntry,
 ): Promise<IDependencyNode> {
   const state = api.getState();
   const downloads = state.persistent.downloads.files;
   const mods = state.persistent.mods[gameMode] ?? {};
 
-  const downloadId = findDownloadByRef(rule.reference, downloads);
+  const downloadId =
+    resolved !== undefined ? resolved.downloadId : findDownloadByRef(rule.reference, downloads);
   if (!downloadId) {
     log("debug", "no download found", { ref: rule.reference.logicalFileName });
   } else {
@@ -375,7 +379,12 @@ async function gatherDependenciesGraph(
       fileSize: rule.reference.fileSize,
     });
   }
-  const mod = findModByRef(rule.reference, mods, undefined, ruleInstallSpec(rule));
+  const mod =
+    resolved !== undefined
+      ? resolved.modId !== undefined
+        ? mods[resolved.modId]
+        : undefined
+      : findModByRef(rule.reference, mods, undefined, ruleInstallSpec(rule));
 
   let urlFromHint: IBrowserResult | undefined;
 
@@ -495,7 +504,7 @@ function flatten(nodes: IDependencyNode[]): IDependencyNode[] {
  * @param api
  * @param recommendations
  */
-function gatherDependencies(
+async function gatherDependencies(
   rules: IModRule[],
   api: IExtensionApi,
   recommendations: boolean,
@@ -508,6 +517,17 @@ function gatherDependencies(
     rules === undefined
       ? []
       : rules.filter((rule: IRule) => rule.type === (recommendations ? "recommends" : "requires"));
+
+  // Resolve top-level members in the core once. The graph still performs the
+  // metadata lookups, but no longer scans every installed mod/download per rule.
+  const resolvedEntries = await resolveDependenciesNatively(
+    requirements,
+    state.persistent.mods[gameMode] ?? {},
+    state.persistent.downloads.files,
+  ).catch(() => undefined);
+  const resolvedByIndex = new Map<number, NativeDependencyEntry>(
+    resolvedEntries?.map((entry) => [entry.ruleIndex, entry]) ?? [],
+  );
 
   let numCompleted = 0;
   const onProgress = () => {
@@ -522,9 +542,18 @@ function gatherDependencies(
   // for each requirement, look up the reference and recursively their dependencies
   return (
     Promise.all(
-      requirements.map((rule: IModRule) =>
+      requirements.map((rule: IModRule, index: number) =>
         Promise.resolve(
-          limit.do(() => gatherDependenciesGraph(rule, api, gameMode, recommendations, addToCache)),
+          limit.do(() =>
+            gatherDependenciesGraph(
+              rule,
+              api,
+              gameMode,
+              recommendations,
+              addToCache,
+              resolvedByIndex.get(index),
+            ),
+          ),
         )
           .then((node: IDependencyNode) => {
             onProgress();

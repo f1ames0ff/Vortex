@@ -38,8 +38,10 @@ import {
   extractArchiveNatively,
   hashFilesNatively,
   inspectStagingNatively,
+  planCollectionNatively,
   purgeWithNativeCore,
   resetNativeDeployStatus,
+  resolveDependenciesNatively,
 } from "./nativeDeploy";
 
 interface FakeNativeDeploy {
@@ -52,6 +54,8 @@ interface FakeNativeDeploy {
   archiveList: ReturnType<typeof vi.fn>;
   archiveExtract: ReturnType<typeof vi.fn>;
   hashFiles: ReturnType<typeof vi.fn>;
+  depsResolve: ReturnType<typeof vi.fn>;
+  collectionPlan: ReturnType<typeof vi.fn>;
 }
 
 let nativeDeploy: FakeNativeDeploy;
@@ -84,6 +88,8 @@ beforeEach(() => {
     archiveList: vi.fn(),
     archiveExtract: vi.fn(),
     hashFiles: vi.fn(),
+    depsResolve: vi.fn(),
+    collectionPlan: vi.fn(),
   };
   installApi(nativeDeploy);
   resetNativeDeployStatus();
@@ -352,5 +358,90 @@ describe("native staging adapter", () => {
       archive: "/downloads/a.7z",
       destination: "/temp/a",
     });
+  });
+
+  it("resolves dependency rules in the core", async () => {
+    const rule = {
+      type: "requires",
+      reference: { tag: "tag-1" },
+    } as never;
+    const mod = {
+      id: "mod-a",
+      state: "installed",
+      attributes: { referenceTag: "tag-1", game: ["skyrimse"] },
+    } as never;
+    nativeDeploy.depsResolve.mockResolvedValue({
+      dependencies: [
+        {
+          ruleIndex: 0,
+          ruleId: "requires_tag-1",
+          type: "requires",
+          phase: 0,
+          ignored: false,
+          modId: "mod-a",
+          status: "installed",
+        },
+      ],
+    });
+
+    const result = await resolveDependenciesNatively([rule], { "mod-a": mod }, {});
+
+    expect(nativeDeploy.depsResolve).toHaveBeenCalledWith({
+      rules: [
+        {
+          index: 0,
+          type: "requires",
+          reference: { tag: "tag-1" },
+          phase: undefined,
+          ignored: undefined,
+          localPath: undefined,
+          installerChoices: undefined,
+          fileList: undefined,
+          patches: undefined,
+        },
+      ],
+      mods: [
+        {
+          id: "mod-a",
+          state: "installed",
+          fileMD5: undefined,
+          fileName: undefined,
+          name: undefined,
+          logicalFileName: undefined,
+          customFileName: undefined,
+          version: undefined,
+          fileId: undefined,
+          modId: undefined,
+          source: undefined,
+          referenceTag: "tag-1",
+          referenceTags: undefined,
+          additionalLogicalFileNames: undefined,
+          game: ["skyrimse"],
+          installerChoices: undefined,
+          fileList: undefined,
+          patches: undefined,
+        },
+      ],
+      downloads: [],
+    });
+    expect(result?.[0].modId).toBe("mod-a");
+  });
+
+  it("builds collection plans in the core", async () => {
+    nativeDeploy.collectionPlan.mockResolvedValue({
+      members: [],
+      phases: [1, 666],
+      totalRequired: 1,
+      totalOptional: 1,
+    });
+
+    const result = await planCollectionNatively([], {}, {});
+
+    expect(nativeDeploy.collectionPlan).toHaveBeenCalledWith({
+      rules: [],
+      mods: [],
+      downloads: [],
+    });
+    expect(result?.phases).toEqual([1, 666]);
   });
 });

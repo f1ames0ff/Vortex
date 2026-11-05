@@ -30,6 +30,9 @@ import type {
   NativeArchiveExtractResult,
   NativeArchiveListRequest,
   NativeArchiveListResult,
+  NativeCollectionPlan,
+  NativeDepsRequest,
+  NativeDepsResolveResult,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
@@ -413,6 +416,8 @@ export interface InvokeChannels {
     request: NativeArchiveExtractRequest,
   ) => Promise<NativeArchiveExtractResult>;
   "nativeDeploy:hashFiles": (request: NativeHashFilesRequest) => Promise<NativeHashFilesResult>;
+  "nativeDeploy:depsResolve": (request: NativeDepsRequest) => Promise<NativeDepsResolveResult>;
+  "nativeDeploy:collectionPlan": (request: NativeDepsRequest) => Promise<NativeCollectionPlan>;
 
   // bsdiff binary patching, run on a main-process worker_thread (only paths cross IPC)
   "bsdiff:create": (oldPath: string, newPath: string, patchPath: string) => Promise<void>;

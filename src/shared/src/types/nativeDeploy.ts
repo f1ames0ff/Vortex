@@ -239,3 +239,98 @@ export interface NativeHashFilesResult {
   results: NativeHashFileResult[];
   failures: NativeHashFailure[];
 }
+
+export interface NativeModReference {
+  id?: string;
+  idHint?: string;
+  md5Hint?: string;
+  archiveId?: string;
+  fileMD5?: string;
+  fileExpression?: string;
+  logicalFileName?: string;
+  tag?: string;
+  gameId?: string;
+  versionMatch?: string;
+  repo?: {
+    repository: string;
+    modId?: string;
+    fileId?: string;
+  };
+}
+
+export interface NativeLookupMod {
+  id: string;
+  state?: string;
+  fileMD5?: string;
+  fileName?: string;
+  name?: string;
+  logicalFileName?: string;
+  customFileName?: string;
+  version?: string;
+  fileId?: string;
+  modId?: string;
+  source?: string;
+  referenceTag?: string;
+  referenceTags?: string[];
+  additionalLogicalFileNames?: string[];
+  game?: string[];
+  installerChoices?: unknown;
+  fileList?: unknown;
+  patches?: unknown;
+}
+
+export interface NativeDownloadInfo {
+  id: string;
+  state: string;
+  fileMD5?: string;
+  localPath?: string;
+  logicalFileName?: string;
+  version?: string;
+  fileId?: string;
+  modId?: string;
+  source?: string;
+  referenceTag?: string;
+  referenceTags?: string[];
+  game?: string[];
+  fileTime?: number;
+}
+
+export interface NativeRuleInfo {
+  index: number;
+  type: string;
+  reference: NativeModReference;
+  phase?: number;
+  ignored?: boolean;
+  localPath?: string;
+  installerChoices?: unknown;
+  fileList?: unknown;
+  patches?: unknown;
+}
+
+export interface NativeDependencyEntry {
+  ruleIndex: number;
+  ruleId: string;
+  type: string;
+  phase: number;
+  ignored: boolean;
+  modId?: string;
+  downloadId?: string;
+  status: string;
+}
+
+export interface NativeCollectionPlan {
+  members: NativeDependencyEntry[];
+  phases: number[];
+  totalRequired: number;
+  totalOptional: number;
+}
+
+export interface NativeDepsRequest {
+  rules: NativeRuleInfo[];
+  mods: NativeLookupMod[];
+  downloads: NativeDownloadInfo[];
+}
+
+export interface NativeDepsResolveResult {
+  dependencies: NativeDependencyEntry[];
+}

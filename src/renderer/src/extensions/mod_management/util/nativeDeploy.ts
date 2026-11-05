@@ -8,22 +8,30 @@
 
 import { getErrorMessageOrDefault } from "@vortex/shared";
 import type {
+  NativeCollectionPlan,
+  NativeDepsRequest,
+  NativeDependencyEntry,
   NativeDeployRequest,
   NativeDeployStatus,
   NativeDeployedFile,
+  NativeDownloadInfo,
   NativeHashAlgorithm,
   NativeInstallRequest,
   NativeInstallResult,
+  NativeLookupMod,
+  NativeModReference,
   NativeModStatus,
+  NativeRuleInfo,
 } from "@vortex/shared/ipc";
 
 import { log } from "../../../logging";
 import type { IExtensionApi } from "../../../types/IExtensionContext";
 import * as fs from "../../../util/fs";
+import type { IDownload } from "../../download_management/types/IDownload";
 import { addDeploymentFailures } from "../actions/session";
 import { mergedSourceName } from "../modMerging";
 import type { IDeployedFile, IDeploymentMethod } from "../types/IDeploymentMethod";
-import type { IMod } from "../types/IMod";
+import type { IMod, IModReference, IModRule } from "../types/IMod";
 import { manifestPaths } from "./activationStore";
 
 /** The deployment method whose on-disk behaviour the native core implements. */
@@ -81,6 +89,155 @@ function coreSupports(status: NativeDeployStatus, capability: string): boolean {
 
 function isUnknownMethod(err: unknown): boolean {
   return getErrorMessageOrDefault(err).includes("unknown method");
+}
+
+function toNativeReference(reference: IModReference): NativeModReference {
+  return {
+    id: reference.id,
+    idHint: reference.idHint,
+    md5Hint: reference.md5Hint,
+    archiveId: reference.archiveId,
+    fileMD5: reference.fileMD5,
+    fileExpression: reference.fileExpression,
+    logicalFileName: reference.logicalFileName,
+    tag: reference.tag,
+    gameId: reference.gameId,
+    versionMatch: reference.versionMatch,
+    repo:
+      reference.repo === undefined
+        ? undefined
+        : {
+            repository: reference.repo.repository,
+            modId: reference.repo.modId?.toString(),
+            fileId: reference.repo.fileId?.toString(),
+          },
+  };
+}
+
+function toNativeLookupMod(mod: IMod): NativeLookupMod {
+  const attrs = (mod.attributes ?? {}) as Record<string, unknown>;
+  const stringValue = (value: unknown): string | undefined =>
+    value === undefined || value === null ? undefined : String(value);
+  return {
+    id: mod.id,
+    state: mod.state,
+    fileMD5: stringValue(attrs.fileMD5),
+    fileName: stringValue(attrs.fileName),
+    name: stringValue(attrs.modName ?? attrs.name),
+    logicalFileName: stringValue(attrs.logicalFileName),
+    customFileName: stringValue(attrs.customFileName),
+    version: stringValue(attrs.version),
+    fileId: stringValue(attrs.fileId),
+    modId: stringValue(attrs.modId),
+    source: stringValue(attrs.source),
+    referenceTag: stringValue(attrs.referenceTag),
+    referenceTags: Array.isArray(attrs.referenceTags)
+      ? attrs.referenceTags.filter((tag): tag is string => typeof tag === "string")
+      : undefined,
+    additionalLogicalFileNames: Array.isArray(attrs.additionalLogicalFileNames)
+      ? attrs.additionalLogicalFileNames.filter((name): name is string => typeof name === "string")
+      : undefined,
+    game: Array.isArray(attrs.game)
+      ? attrs.game.filter((game): game is string => typeof game === "string")
+      : undefined,
+    installerChoices: attrs.installerChoices,
+    fileList: attrs.fileList,
+    patches: attrs.patches,
+  };
+}
+
+function toNativeDownload(download: IDownload): NativeDownloadInfo {
+  const modInfo = download.modInfo ?? {};
+  const nexusIds = modInfo.nexus?.ids;
+  const details = modInfo.meta?.details;
+  const stringValue = (value: unknown): string | undefined =>
+    value === undefined || value === null ? undefined : String(value);
+  return {
+    id: download.id,
+    state: download.state,
+    fileMD5: download.fileMD5,
+    localPath: download.localPath,
+    logicalFileName: modInfo.name ?? modInfo.meta?.logicalFileName ?? download.localPath,
+    version: modInfo.version ?? modInfo.meta?.fileVersion,
+    fileId: stringValue(nexusIds?.fileId ?? details?.fileId),
+    modId: stringValue(nexusIds?.modId ?? details?.modId),
+    source: modInfo.source,
+    referenceTag: modInfo.referenceTag,
+    referenceTags: modInfo.referenceTags,
+    game: download.game,
+    fileTime: download.fileTime,
+  };
+}
+
+function toNativeRule(rule: IModRule, index: number): NativeRuleInfo {
+  return {
+    index,
+    type: rule.type,
+    reference: toNativeReference(rule.reference),
+    phase: rule.phase ?? (rule.extra?.phase as number | undefined),
+    ignored: rule.ignored,
+    localPath: rule.extra?.localPath,
+    installerChoices: rule.installerChoices,
+    fileList: rule.fileList,
+    patches: rule.patches ?? rule.extra?.patches,
+  };
+}
+
+function toNativeDepsRequest(
+  rules: IModRule[],
+  mods: Record<string, IMod>,
+  downloads: Record<string, IDownload>,
+): NativeDepsRequest {
+  return {
+    rules: rules.map(toNativeRule),
+    mods: Object.values(mods).map(toNativeLookupMod),
+    downloads: Object.values(downloads).map(toNativeDownload),
+  };
+}
+
+/** Resolve dependency rules in the core; `undefined` asks the caller to fall back. */
+export async function resolveDependenciesNatively(
+  rules: IModRule[],
+  mods: Record<string, IMod>,
+  downloads: Record<string, IDownload>,
+): Promise<NativeDependencyEntry[] | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "deps.resolve")) {
+    return undefined;
+  }
+  try {
+    const result = await window.api.nativeDeploy.depsResolve(
+      toNativeDepsRequest(rules, mods, downloads),
+    );
+    return result.dependencies;
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Build the collection phase/member plan in the core; `undefined` falls back. */
+export async function planCollectionNatively(
+  rules: IModRule[],
+  mods: Record<string, IMod>,
+  downloads: Record<string, IDownload>,
+): Promise<NativeCollectionPlan | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.plan")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.collectionPlan(
+      toNativeDepsRequest(rules, mods, downloads),
+    );
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 /**

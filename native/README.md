@@ -177,6 +177,12 @@ binary, or a disabled flag keep the existing TypeScript implementation. The
 renderer still writes its own manifest/backup copies afterwards, so manifests
 stay compatible with the old path.
 
+Collection resolution is also moving across: `gatherDependencies` asks
+`deps.resolve` for the top-level rule matches before its metadata lookups, and
+`InstallDriver` uses `collection.plan` to compute the missing-member set.
+Both keep the existing TypeScript resolver as the fallback when the flag is
+off or the core lacks the capability.
+
 Known integration gaps for the next slice:
 
 - Only hardlink deployment is routed; symlink/move and single-mod activation

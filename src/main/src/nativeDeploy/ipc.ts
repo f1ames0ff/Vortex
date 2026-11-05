@@ -5,6 +5,7 @@ import path from "node:path";
 import type {
   NativeArchiveExtractRequest,
   NativeArchiveListRequest,
+  NativeDepsRequest,
   NativeDeployRequest,
   NativeHashFilesRequest,
   NativeInstallRequest,
@@ -92,6 +93,14 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle("nativeDeploy:hashFiles", (_event, request: NativeHashFilesRequest) =>
     nativeCoreClient().hashFiles(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:depsResolve", (_event, request: NativeDepsRequest) =>
+    nativeCoreClient().depsResolve(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:collectionPlan", (_event, request: NativeDepsRequest) =>
+    nativeCoreClient().collectionPlan(request),
   );
 }
 

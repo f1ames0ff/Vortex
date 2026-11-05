@@ -57,6 +57,8 @@ try {
       archiveList: (request) => betterIpcRenderer.invoke("nativeDeploy:archiveList", request),
       archiveExtract: (request) => betterIpcRenderer.invoke("nativeDeploy:archiveExtract", request),
       hashFiles: (request) => betterIpcRenderer.invoke("nativeDeploy:hashFiles", request),
+      depsResolve: (request) => betterIpcRenderer.invoke("nativeDeploy:depsResolve", request),
+      collectionPlan: (request) => betterIpcRenderer.invoke("nativeDeploy:collectionPlan", request),
     },
 
     shell: {

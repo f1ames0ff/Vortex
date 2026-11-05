@@ -36,6 +36,7 @@ import type { IMod, IModRule } from "../../mod_management/types/IMod";
 import { findModByRef } from "../../mod_management/util/findModByRef";
 import renderModName from "../../mod_management/util/modName";
 import { appendModReferenceTagsActions } from "../../mod_management/util/modReferenceTags";
+import { planCollectionNatively } from "../../mod_management/util/nativeDeploy";
 import testModReference, {
   isDependencyRule,
   isOptionalRule,
@@ -926,13 +927,24 @@ class InstallDriver {
     this.mApi.store.dispatch(setModEnabled(profile.id, collection.id, true));
 
     const required = (collection?.rules ?? []).filter((rule) => isDependencyRule(rule));
-    const dependencies: IModRule[] = required.reduce((accum, rule) => {
-      const mod = findModByRef(rule.reference, mods, undefined, ruleInstallSpec(rule));
-      if (mod === undefined) {
-        accum.push(rule);
-      }
-      return accum;
-    }, []);
+    const nativePlan = await planCollectionNatively(
+      required,
+      mods,
+      state.persistent.downloads.files,
+    ).catch(() => undefined);
+    const dependencies: IModRule[] =
+      nativePlan !== undefined
+        ? nativePlan.members
+            .filter((member) => member.status !== "installed")
+            .map((member) => required[member.ruleIndex])
+            .filter((rule): rule is IModRule => rule !== undefined)
+        : required.reduce((accum, rule) => {
+            const mod = findModByRef(rule.reference, mods, undefined, ruleInstallSpec(rule));
+            if (mod === undefined) {
+              accum.push(rule);
+            }
+            return accum;
+          }, []);
     this.setDependentMods(dependencies);
     // log('debug', 'dependent mods', JSON.stringify(dependencies));
 

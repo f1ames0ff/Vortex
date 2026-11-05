@@ -18,6 +18,9 @@ import type {
   NativeArchiveExtractResult,
   NativeArchiveListRequest,
   NativeArchiveListResult,
+  NativeCollectionPlan,
+  NativeDepsRequest,
+  NativeDepsResolveResult,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
@@ -183,6 +186,14 @@ export class NativeCoreClient {
 
   hashFiles(request: NativeHashFilesRequest): Promise<NativeHashFilesResult> {
     return this.#request("hash.files", request);
+  }
+
+  depsResolve(request: NativeDepsRequest): Promise<NativeDepsResolveResult> {
+    return this.#request("deps.resolve", request);
+  }
+
+  collectionPlan(request: NativeDepsRequest): Promise<NativeCollectionPlan> {
+    return this.#request("collection.plan", request);
   }
 
   /** Stop the core process and reject anything still in flight. */
