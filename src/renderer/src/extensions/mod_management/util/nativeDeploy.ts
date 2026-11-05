@@ -10,8 +10,10 @@ import * as path from "node:path";
 
 import { getErrorMessageOrDefault } from "@vortex/shared";
 import type {
+  NativeArchiveListResult,
   NativeCollectionJobMember,
   NativeCollectionJobStatus,
+  NativeCollectionTask,
   NativeCollectionNextResult,
   NativeCollectionPlan,
   NativeCollectionStartResult,
@@ -406,6 +408,63 @@ export async function cancelCollectionJobNatively(
     return undefined;
   }
   return window.api.nativeDeploy.collectionCancel(jobId);
+}
+
+/** List an archive in the core, returning `undefined` when unavailable. */
+export async function listArchiveNatively(
+  archive: string,
+): Promise<NativeArchiveListResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "archive.list")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.archiveList({ archive });
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Attach an execution task to a member of a running collection job. */
+export async function attachCollectionTaskNatively(
+  jobId: string,
+  ruleId: string,
+  task: NativeCollectionTask,
+): Promise<NativeCollectionJobStatus | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.task")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.collectionTask({ jobId, ruleId, task });
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Execute one member task synchronously in the core. */
+export async function executeCollectionMemberNatively(
+  jobId: string,
+  ruleId: string,
+): Promise<NativeCollectionJobStatus | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.execute")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.collectionExecute({ jobId, ruleId });
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 /** Start core workers for a collection job whose members carry tasks. */

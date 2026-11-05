@@ -133,6 +133,14 @@ export class VortexCoreClient {
     return this.request("collection.run", { jobId });
   }
 
+  collectionTask(request) {
+    return this.request("collection.task", request);
+  }
+
+  collectionExecute(request) {
+    return this.request("collection.execute", request);
+  }
+
   downloadAdd(request) {
     return this.request("download.add", request);
   }

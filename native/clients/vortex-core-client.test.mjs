@@ -679,3 +679,54 @@ test("executes a collection member through core workers", async () => {
     server.close();
   }
 });
+
+test("attaches and executes a task on a collection member", async () => {
+  const work = join(root, "collection-attach");
+  const source = join(work, "source");
+  const temp = join(work, "temp");
+  const destination = join(work, "staging", "ModA");
+  mkdirSync(source, { recursive: true });
+  writeFileSync(join(source, "b.txt"), "attached-content");
+  const archive = join(work, "attached.zip");
+  execFileSync(sevenZip, ["a", "-tzip", archive, "b.txt"], { cwd: source, stdio: "ignore" });
+
+  const started = await client.collectionStart({
+    collectionId: "collection",
+    gameId: "skyrimse",
+    concurrency: 1,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_attached",
+        type: "requires",
+        phase: 1,
+        ignored: false,
+        status: "pending",
+      },
+    ],
+  });
+
+  const attached = await client.collectionTask({
+    jobId: started.jobId,
+    ruleId: "requires_attached",
+    task: {
+      modId: "ModA",
+      extract: { archive, destination: temp, sevenZip },
+      install: {
+        temp,
+        destination,
+        instructions: [{ type: "copy", source: "b.txt", destination: "b.txt" }],
+      },
+    },
+  });
+  assert.equal(attached.members[0].status, "pending");
+
+  const executed = await client.collectionExecute({
+    jobId: started.jobId,
+    ruleId: "requires_attached",
+  });
+  assert.equal(executed.complete, true);
+  assert.equal(executed.members[0].status, "installed", executed.members[0].error);
+  assert.equal(readFileSync(join(destination, "b.txt"), "utf8"), "attached-content");
+});

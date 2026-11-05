@@ -33,12 +33,14 @@ vi.mock("../../../util/fs", () => ({
 
 import {
   applyInstallNatively,
+  attachCollectionTaskNatively,
   cancelCollectionJobNatively,
   canDeployNatively,
   collectionStatusNatively,
   deploySingleModNatively,
   deployWithNativeCore,
   detectExternalChangesNatively,
+  executeCollectionMemberNatively,
   downloadFileNatively,
   extractArchiveNatively,
   hashFilesNatively,
@@ -81,6 +83,8 @@ interface FakeNativeDeploy {
   collectionPause: ReturnType<typeof vi.fn>;
   collectionCancel: ReturnType<typeof vi.fn>;
   collectionRun: ReturnType<typeof vi.fn>;
+  collectionTask: ReturnType<typeof vi.fn>;
+  collectionExecute: ReturnType<typeof vi.fn>;
   downloadAdd: ReturnType<typeof vi.fn>;
   downloadStatus: ReturnType<typeof vi.fn>;
   downloadList: ReturnType<typeof vi.fn>;
@@ -133,6 +137,8 @@ beforeEach(() => {
     collectionPause: vi.fn(),
     collectionCancel: vi.fn(),
     collectionRun: vi.fn(),
+    collectionTask: vi.fn(),
+    collectionExecute: vi.fn(),
     downloadAdd: vi.fn(),
     downloadStatus: vi.fn(),
     downloadList: vi.fn(),
@@ -752,7 +758,25 @@ describe("native staging adapter", () => {
     await pauseCollectionJobNatively("job-1");
     await cancelCollectionJobNatively("job-1");
     await runCollectionJobNatively("job-1");
+    nativeDeploy.collectionTask.mockResolvedValue({ members: [] });
+    nativeDeploy.collectionExecute.mockResolvedValue({
+      members: [{ ruleId: "requires_a", status: "installed" }],
+    });
+    await attachCollectionTaskNatively("job-1", "requires_a", {
+      extract: { destination: "/temp" },
+      install: { destination: "/staging", instructions: [] },
+    });
+    const executed = await executeCollectionMemberNatively("job-1", "requires_a");
 
+    expect(nativeDeploy.collectionTask).toHaveBeenCalledWith({
+      jobId: "job-1",
+      ruleId: "requires_a",
+      task: {
+        extract: { destination: "/temp" },
+        install: { destination: "/staging", instructions: [] },
+      },
+    });
+    expect(executed?.members[0].status).toBe("installed");
     expect(nativeDeploy.collectionStart).toHaveBeenCalledWith({
       collectionId: "collection",
       gameId: "skyrimse",

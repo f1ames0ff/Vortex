@@ -98,6 +98,17 @@ public:
      */
     void run(const std::string& jobId, DownloadQueue& downloads);
 
+    /** Attach or replace the execution task of one member. */
+    bool setTask(const std::string& jobId, const std::string& ruleId, CollectionTask task);
+
+    /**
+     * Execute one member synchronously (download -> extract -> install) and
+     * return the resulting job state. Used by renderer orchestrators that still
+     * drive phases themselves.
+     */
+    bool execute(const std::string& jobId, const std::string& ruleId, DownloadQueue& downloads,
+                 CollectionJob& result);
+
     static nlohmann::json status(const CollectionJob& job);
 
 private:

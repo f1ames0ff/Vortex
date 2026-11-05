@@ -521,3 +521,27 @@ export interface NativeExternalChangesRequest {
 export interface NativeExternalChangesResult {
   changes: NativeExternalChange[];
 }
+
+export interface NativeCollectionTask {
+  download?: NativeDownloadRequest;
+  extract?: {
+    archive?: string;
+    destination: string;
+    /** Injected by main when omitted. */
+    sevenZip?: string;
+    password?: string;
+  };
+  install?: {
+    temp?: string;
+    destination: string;
+    instructions: NativeInstallInstruction[];
+    concurrency?: number;
+  };
+  modId?: string;
+}
+
+export interface NativeCollectionTaskRequest {
+  jobId: string;
+  ruleId: string;
+  task: NativeCollectionTask;
+}

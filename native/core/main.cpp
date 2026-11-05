@@ -791,7 +791,8 @@ json dispatch(CoreState& state, const Request& request) {
               "archive.list", "archive.extract", "hash.files", "deps.matchMod",
               "deps.matchDownload", "deps.resolve", "collection.plan", "collection.start",
               "collection.status", "collection.next", "collection.member", "collection.pause",
-              "collection.cancel", "collection.run", "download.queue", "plugins.scan",
+              "collection.cancel", "collection.run", "collection.task",
+              "collection.execute", "download.queue", "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
               "deploy.symlink", "deploy.move", "deploy.single",
               "deployment.externalChanges", "purge"}},
@@ -975,7 +976,8 @@ json dispatch(CoreState& state, const Request& request) {
 
     if (request.method == "collection.status" || request.method == "collection.next" ||
         request.method == "collection.pause" || request.method == "collection.cancel" ||
-        request.method == "collection.member" || request.method == "collection.run") {
+        request.method == "collection.member" || request.method == "collection.run" ||
+        request.method == "collection.task" || request.method == "collection.execute") {
         const auto jobId = params.value("jobId", std::string{});
         if (jobId.empty()) {
             throw std::runtime_error("params.jobId is required");
@@ -1013,6 +1015,28 @@ json dispatch(CoreState& state, const Request& request) {
         if (request.method == "collection.run") {
             state.collectionJobs.run(jobId, state.downloadQueue());
             state.collectionJobs.copy(jobId, snapshot);
+            return vortex::core::CollectionJobs::status(snapshot);
+        }
+        if (request.method == "collection.task") {
+            const auto ruleId = params.value("ruleId", std::string{});
+            if (ruleId.empty() || !params.contains("task")) {
+                throw std::runtime_error("params.ruleId and params.task are required");
+            }
+            if (!state.collectionJobs.setTask(jobId, ruleId,
+                                              readCollectionTask(params["task"]))) {
+                throw std::runtime_error("unknown collection member: " + ruleId);
+            }
+            state.collectionJobs.copy(jobId, snapshot);
+            return vortex::core::CollectionJobs::status(snapshot);
+        }
+        if (request.method == "collection.execute") {
+            const auto ruleId = params.value("ruleId", std::string{});
+            if (ruleId.empty()) {
+                throw std::runtime_error("params.ruleId is required");
+            }
+            if (!state.collectionJobs.execute(jobId, ruleId, state.downloadQueue(), snapshot)) {
+                throw std::runtime_error("unknown collection member: " + ruleId);
+            }
             return vortex::core::CollectionJobs::status(snapshot);
         }
 

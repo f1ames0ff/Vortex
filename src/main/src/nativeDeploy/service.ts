@@ -24,6 +24,7 @@ import type {
   NativeCollectionPlan,
   NativeCollectionStartRequest,
   NativeCollectionStartResult,
+  NativeCollectionTaskRequest,
   NativeDepsRequest,
   NativeDepsResolveResult,
   NativeDownloadListResult,
@@ -258,6 +259,17 @@ export class NativeCoreClient {
 
   collectionRun(jobId: string): Promise<NativeCollectionJobStatus> {
     return this.#request("collection.run", { jobId });
+  }
+
+  collectionTask(request: NativeCollectionTaskRequest): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.task", request);
+  }
+
+  collectionExecute(request: {
+    jobId: string;
+    ruleId: string;
+  }): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.execute", request);
   }
 
   downloadAdd(request: NativeDownloadRequest): Promise<NativeDownloadStatus> {

@@ -6,6 +6,7 @@ import type {
   NativeArchiveExtractRequest,
   NativeArchiveListRequest,
   NativeCollectionMemberUpdate,
+  NativeCollectionTaskRequest,
   NativeCollectionStartRequest,
   NativeDepsRequest,
   NativeDeployRequest,
@@ -158,6 +159,35 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle("nativeDeploy:collectionRun", (_event, jobId: string) =>
     nativeCoreClient().collectionRun(jobId),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:collectionTask",
+    (_event, request: NativeCollectionTaskRequest) => {
+      const sevenZip = request.task.extract?.sevenZip ?? resolveSevenZipPath();
+      const curl = request.task.download?.curl ?? process.env.VORTEX_CURL_PATH ?? "curl";
+      return nativeCoreClient().collectionTask({
+        ...request,
+        task: {
+          ...request.task,
+          download:
+            request.task.download === undefined ? undefined : { ...request.task.download, curl },
+          extract:
+            request.task.extract === undefined
+              ? undefined
+              : {
+                  ...request.task.extract,
+                  sevenZip: request.task.extract.sevenZip ?? sevenZip,
+                },
+        },
+      });
+    },
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:collectionExecute",
+    (_event, request: { jobId: string; ruleId: string }) =>
+      nativeCoreClient().collectionExecute(request),
   );
 
   betterIpcMain.handle("nativeDeploy:downloadAdd", (_event, request: NativeDownloadRequest) =>

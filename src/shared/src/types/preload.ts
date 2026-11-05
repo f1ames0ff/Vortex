@@ -45,6 +45,8 @@ import type {
   NativeCollectionPlan,
   NativeCollectionStartRequest,
   NativeCollectionStartResult,
+  NativeCollectionTask,
+  NativeCollectionTaskRequest,
   NativeDepsRequest,
   NativeDepsResolveResult,
   NativeDownloadListResult,
@@ -700,6 +702,12 @@ export interface NativeDeployApi {
 
   /** Starts core-driven workers for members that carry execution tasks. */
   collectionRun(jobId: string): Promise<NativeCollectionJobStatus>;
+
+  /** Attaches an execution task to one collection member. */
+  collectionTask(request: NativeCollectionTaskRequest): Promise<NativeCollectionJobStatus>;
+
+  /** Executes one collection member's task and returns the job state. */
+  collectionExecute(request: { jobId: string; ruleId: string }): Promise<NativeCollectionJobStatus>;
 
   /** Adds a download to the core-owned queue. */
   downloadAdd(request: NativeDownloadRequest): Promise<NativeDownloadStatus>;

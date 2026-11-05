@@ -426,6 +426,49 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
     }
 }
 
+bool CollectionJobs::setTask(const std::string& jobId, const std::string& ruleId,
+                             CollectionTask task) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = jobs_.find(jobId);
+    if (found == jobs_.end()) {
+        return false;
+    }
+    const auto member = std::find_if(found->second.members.begin(), found->second.members.end(),
+                                     [&](const auto& candidate) {
+                                         return candidate.ruleId == ruleId;
+                                     });
+    if (member == found->second.members.end()) {
+        return false;
+    }
+    member->task = std::move(task);
+    found->second.lastProgress = deployment::platform::now_ms();
+    return true;
+}
+
+bool CollectionJobs::execute(const std::string& jobId, const std::string& ruleId,
+                             DownloadQueue& downloads, CollectionJob& result) {
+    CollectionMemberState member;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto found = jobs_.find(jobId);
+        if (found == jobs_.end()) {
+            return false;
+        }
+        const auto entry = std::find_if(found->second.members.begin(), found->second.members.end(),
+                                        [&](const auto& candidate) {
+                                            return candidate.ruleId == ruleId;
+                                        });
+        if (entry == found->second.members.end()) {
+            return false;
+        }
+        member = *entry;
+        entry->status = "queued";
+    }
+
+    executeMember(jobId, member, downloads);
+    return copy(jobId, result);
+}
+
 void CollectionJobs::run(const std::string& jobId, DownloadQueue& downloads) {
     std::thread previous;
     {

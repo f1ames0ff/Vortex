@@ -14,7 +14,7 @@ import {
 } from "@vortex/shared";
 import { parseError, VortexModStagingFolder } from "@vortex/shared";
 import { AlreadyDownloaded, InsufficientDiskSpace } from "@vortex/shared/errors";
-import type { NativeInstallInstruction } from "@vortex/shared/ipc";
+import type { NativeCollectionTask, NativeInstallInstruction } from "@vortex/shared/ipc";
 import * as _ from "lodash";
 import type { IHashResult, ILookupResult, IRule } from "modmeta-db";
 import Zip from "node-7z";
@@ -204,9 +204,12 @@ import metaLookupMatch from "./util/metaLookupMatch";
 import modName, { renderModReference } from "./util/modName";
 import {
   applyInstallNatively,
+  attachCollectionTaskNatively,
   cancelCollectionJobNatively,
   downloadFileNatively,
+  executeCollectionMemberNatively,
   extractArchiveNatively,
+  listArchiveNatively,
   nextCollectionMembersNatively,
   startCollectionNatively,
   updateCollectionMemberNatively,
@@ -1212,6 +1215,7 @@ class InstallManager {
     allowAutoDeploy?: boolean,
     sourceModId?: string,
     modReference?: IModReference,
+    preparedPath?: string,
   ): void {
     const baseName = path.basename(archivePath, path.extname(archivePath)).trim() || "EMPTY_NAME";
     const installId = this.generateDependencyInstallKey(sourceModId, archiveId);
@@ -1746,6 +1750,13 @@ class InstallManager {
                       ? VortexModStagingFolder(existingMod.installationPath)
                       : undefined;
                   details.archiveId = archiveId ?? undefined;
+                  if (preparedPath !== undefined) {
+                    return fs
+                      .removeAsync(destinationPath)
+                      .catch(() => undefined)
+                      .then(() => fs.moveAsync(preparedPath, destinationPath, { overwrite: true }))
+                      .then(() => ({ instructions: [], installerId: "native-core" }));
+                  }
                   return this.installInner(
                     api,
                     archivePath,
@@ -1836,6 +1847,9 @@ class InstallManager {
                     instructions: IInstruction[];
                     overrideInstructions?: IInstruction[];
                   }) => {
+                    if (preparedPath !== undefined) {
+                      return Promise.resolve();
+                    }
                     const startTime = Date.now();
                     return this.processInstructions(
                       api,
@@ -2490,6 +2504,126 @@ class InstallManager {
   }
 
   // Starts a queued installation task and wires up phase accounting
+  /**
+   * Core fast path for plain (non-FOMOD) dependency archives: the core downloads
+   * nothing here because the archive is already finished, but it extracts and
+   * applies copy instructions into a prepared staging directory. The existing
+   * install path then only registers the mod record and moves the prepared
+   * directory into the final staging location.
+   */
+  private async tryNativeSimpleInstall(
+    api: IExtensionApi,
+    dep: IDependency,
+    downloadId: string,
+    gameId: string,
+    sourceModId: string,
+  ): Promise<string | undefined> {
+    const jobId = this.mNativeCollectionJobs.get(sourceModId);
+    if (jobId === undefined) {
+      return undefined;
+    }
+    if (
+      dep.installerChoices !== undefined ||
+      dep.fileList !== undefined ||
+      dep.patches !== undefined ||
+      dep.extra?.instructions !== undefined
+    ) {
+      return undefined;
+    }
+
+    const state = api.getState();
+    if (state.persistent.mods[gameId]?.[sourceModId]?.type !== "collection") {
+      return undefined;
+    }
+    const download = state.persistent.downloads.files[downloadId];
+    if (download?.state !== "finished" || download.size === 0) {
+      return undefined;
+    }
+    const pathGameId =
+      convertGameIdReverse(knownGames(state), download.game?.[0]) ?? download.game?.[0];
+    if (pathGameId === undefined) {
+      return undefined;
+    }
+    const archivePath = path.join(downloadPathForGame(state, pathGameId), download.localPath);
+
+    const listing = await listArchiveNatively(archivePath).catch(() => undefined);
+    if (listing === undefined || listing.code !== 0 || listing.encrypted) {
+      return undefined;
+    }
+    const files = listing.entries.filter((entry) => !entry.directory && !entry.symlink);
+    if (files.length === 0) {
+      return undefined;
+    }
+    const normalized = (value: string) => value.replace(/\\/g, "/").toLowerCase();
+    if (
+      files.some(
+        (entry) =>
+          normalized(entry.path).endsWith("fomod/moduleconfig.xml") ||
+          normalized(entry.path).endsWith(".vortex_override_instructions.json"),
+      )
+    ) {
+      return undefined;
+    }
+
+    const workRoot = path.join(os.tmpdir(), "vortex-native-install", shortid());
+    const extractDir = path.join(workRoot, "extract");
+    const staged = path.join(workRoot, "staged");
+    const task: NativeCollectionTask = {
+      extract: { destination: extractDir },
+      install: {
+        temp: extractDir,
+        destination: staged,
+        instructions: files.map((entry) => ({
+          type: "copy",
+          source: entry.path,
+          destination: entry.path,
+        })),
+      },
+    };
+
+    const ruleId = dep.sessionRuleId ?? `requires_${referenceId(dep.reference) ?? "undefined"}`;
+    const attached = await attachCollectionTaskNatively(jobId, ruleId, task).catch(() => undefined);
+    if (attached === undefined) {
+      return undefined;
+    }
+    const status = await executeCollectionMemberNatively(jobId, ruleId).catch(() => undefined);
+    const member = status?.members.find((entry) => entry.ruleId === ruleId);
+    if (member?.status !== "installed") {
+      await fs.removeAsync(workRoot).catch(() => undefined);
+      return undefined;
+    }
+
+    log("info", "registering core-installed dependency", {
+      downloadId,
+      sourceModId,
+      ruleId,
+    });
+    try {
+      return await this.installModAsync(
+        dep.reference,
+        api,
+        downloadId,
+        { choices: dep.installerChoices, patches: dep.patches },
+        dep.fileList,
+        gameId,
+        true,
+        sourceModId,
+        staged,
+      );
+    } catch (err) {
+      await fs.removeAsync(workRoot).catch(() => undefined);
+      await updateCollectionMemberNatively(jobId, ruleId, "failed", {
+        error: getErrorMessageOrDefault(err),
+        retry: true,
+      }).catch(() => undefined);
+      log("warn", "native simple install failed, falling back", {
+        downloadId,
+        error: getErrorMessageOrDefault(err),
+      });
+      return undefined;
+    }
+  }
+
   private startQueuedInstallation(
     api: IExtensionApi,
     dep: IDependency,
@@ -2585,10 +2719,15 @@ class InstallManager {
               sourceModId,
             );
           }
+          const nativeModId =
+            existingMod == null
+              ? await this.tryNativeSimpleInstall(api, currentDep, downloadId, gameId, sourceModId)
+              : undefined;
           const modId =
             existingMod != null
               ? existingMod.id
-              : await this.withInstructions(
+              : (nativeModId ??
+                (await this.withInstructions(
                   api,
                   modName(sourceMod),
                   renderModReference(currentDep.reference),
@@ -2609,7 +2748,7 @@ class InstallManager {
                       true,
                       sourceModId,
                     ),
-                );
+                )));
 
           if (modId) {
             this.mActiveInstalls.delete(installKey);
@@ -7745,6 +7884,7 @@ class InstallManager {
     forceGameId?: string,
     silent?: boolean,
     sourceModId?: string,
+    preparedPath?: string,
   ): Promise<string> {
     const state = api.store.getState();
     const download: IDownload = state.persistent.downloads.files[downloadId];
@@ -7804,6 +7944,7 @@ class InstallManager {
         false,
         sourceModId,
         requirement,
+        preparedPath,
       );
     });
   }

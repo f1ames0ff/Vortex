@@ -160,6 +160,17 @@ carry an execution `task`:
 }
 ```
 
+`collection.task` attaches a task to a member of a running job, and
+`collection.execute` executes just that member synchronously, for renderer
+orchestrators that still drive phases themselves.
+
+`InstallManager` now uses that path for collection dependencies whose archive
+has no FOMOD and no override instructions: it lists the archive in the core,
+attaches a copy-all task, executes it into a prepared staging directory, then
+runs the existing install path only to register the mod record and move the
+prepared directory into place. FOMOD, installer-choice, file-list and patched
+members stay on the TypeScript path.
+
 `collection.run` starts core workers that repeatedly take members from
 `collection.next`, execute download → extract → install, and report back
 through the same state machine. Workers honour concurrency, pause/cancel,
@@ -293,9 +304,11 @@ fallback when the core is disabled or lacks a capability.
 
 Known integration gaps for the next slice:
 
-- `InstallDriver` still drives members through `collection.next`; the
-  `collection.run` core worker is available for members that carry a task and
-  will replace that executor incrementally.
+- `InstallDriver` still drives phase scheduling through `collection.next`;
+  `InstallManager` executes simple non-FOMOD collection members through
+  `collection.task`/`collection.execute`, while complex members stay in TS.
+  The all-core `collection.run` worker remains available for jobs whose
+  members all carry tasks.
 - Single-mod activation and move deployment use the core when its
   `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
   back to the TypeScript activator.

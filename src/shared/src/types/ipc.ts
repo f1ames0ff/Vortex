@@ -36,6 +36,8 @@ import type {
   NativeCollectionPlan,
   NativeCollectionStartRequest,
   NativeCollectionStartResult,
+  NativeCollectionTask,
+  NativeCollectionTaskRequest,
   NativeDepsRequest,
   NativeDepsResolveResult,
   NativeDownloadListResult,
@@ -456,6 +458,13 @@ export interface InvokeChannels {
   "nativeDeploy:collectionPause": (jobId: string) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionCancel": (jobId: string) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionRun": (jobId: string) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionTask": (
+    request: NativeCollectionTaskRequest,
+  ) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionExecute": (request: {
+    jobId: string;
+    ruleId: string;
+  }) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:downloadAdd": (request: NativeDownloadRequest) => Promise<NativeDownloadStatus>;
   "nativeDeploy:downloadStatus": (id: string) => Promise<NativeDownloadStatus>;
   "nativeDeploy:downloadList": () => Promise<NativeDownloadListResult>;
