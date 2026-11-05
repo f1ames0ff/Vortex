@@ -81,6 +81,26 @@ export interface NativeDeployPlanSummary {
   files?: NativeDeployedFile[];
 }
 
+export interface NativeDeploySingleRequest {
+  staging: string;
+  target: string;
+  manifest: string;
+  instance?: string;
+  method: string;
+  game: string;
+  enable?: boolean;
+  mod: {
+    installationPath: string;
+    sourceName?: string;
+    target?: string;
+    fileOverrides?: string[];
+  };
+  options?: {
+    caseInsensitive?: boolean;
+    blacklist?: string[];
+  };
+}
+
 export interface NativeDeployResult {
   report: NativeDeployReport;
   operation: string;

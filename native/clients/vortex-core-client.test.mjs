@@ -466,3 +466,103 @@ test("forwards download headers and supports a non-atomic destination", async ()
     server.close();
   }
 });
+
+test("activates and deactivates a single mod without disturbing others", async () => {
+  const singleStaging = join(root, "single-staging");
+  const singleTarget = join(root, "single-target");
+  mkdirSync(join(singleStaging, "ModA"), { recursive: true });
+  mkdirSync(join(singleStaging, "ModB"), { recursive: true });
+  mkdirSync(singleTarget, { recursive: true });
+  writeFileSync(join(singleStaging, "ModA", "a.txt"), "mod-a");
+  writeFileSync(join(singleStaging, "ModB", "b.txt"), "mod-b");
+  const singleManifest = join(singleTarget, "vortex.deployment.json");
+
+  const deployedB = await client.request("deploy", {
+    includeFiles: true,
+    staging: singleStaging,
+    target: singleTarget,
+    manifest: singleManifest,
+    mods: [{ installationPath: "ModB", sourceName: "ModB", target: "" }],
+    instance: "test",
+    method: "hardlink_activator",
+    game: "skyrimse",
+  });
+  assert.equal(deployedB.report.failures.length, 0);
+  assert.equal(readFileSync(join(singleTarget, "b.txt"), "utf8"), "mod-b");
+
+  const activatedA = await client.request("deploy.single", {
+    staging: singleStaging,
+    target: singleTarget,
+    manifest: singleManifest,
+    instance: "test",
+    method: "hardlink_activator",
+    game: "skyrimse",
+    enable: true,
+    mod: { installationPath: "ModA", sourceName: "ModA", target: "" },
+  });
+  assert.equal(activatedA.report.failures.length, 0);
+  assert.deepEqual(activatedA.files.map((file) => `${file.source}/${file.relPath}`).sort(), [
+    "ModA/a.txt",
+    "ModB/b.txt",
+  ]);
+  assert.equal(readFileSync(join(singleTarget, "a.txt"), "utf8"), "mod-a");
+  assert.equal(readFileSync(join(singleTarget, "b.txt"), "utf8"), "mod-b");
+
+  const deactivatedA = await client.request("deploy.single", {
+    staging: singleStaging,
+    target: singleTarget,
+    manifest: singleManifest,
+    instance: "test",
+    method: "hardlink_activator",
+    game: "skyrimse",
+    enable: false,
+    mod: { installationPath: "ModA", sourceName: "ModA", target: "" },
+  });
+  assert.equal(deactivatedA.report.failures.length, 0);
+  assert.deepEqual(
+    deactivatedA.files.map((file) => `${file.source}/${file.relPath}`),
+    ["ModB/b.txt"],
+  );
+  assert.equal(existsSync(join(singleTarget, "a.txt")), false);
+  assert.equal(readFileSync(join(singleTarget, "b.txt"), "utf8"), "mod-b");
+});
+
+test("moves a mod into the game directory and restores it on purge", async () => {
+  const moveStaging = join(root, "move-staging");
+  const moveTarget = join(root, "move-target");
+  mkdirSync(join(moveStaging, "ModA", "nested"), { recursive: true });
+  mkdirSync(moveTarget, { recursive: true });
+  writeFileSync(join(moveStaging, "ModA", "a.txt"), "mod-a");
+  writeFileSync(join(moveStaging, "ModA", "nested", "b.txt"), "mod-b");
+  writeFileSync(join(moveTarget, "a.txt"), "game-a");
+  const moveManifest = join(moveTarget, "vortex.deployment.json");
+
+  const moved = await client.request("deploy", {
+    includeFiles: true,
+    staging: moveStaging,
+    target: moveTarget,
+    manifest: moveManifest,
+    mods: [{ installationPath: "ModA", sourceName: "ModA", target: "" }],
+    instance: "test",
+    method: "move_activator",
+    game: "skyrimse",
+  });
+  assert.equal(moved.report.failures.length, 0);
+  assert.equal(existsSync(join(moveStaging, "ModA", "a.txt")), false);
+  assert.ok(existsSync(join(moveStaging, "ModA", "a.txt.vortex_lnk")));
+  assert.equal(readFileSync(join(moveTarget, "a.txt"), "utf8"), "mod-a");
+  assert.equal(readFileSync(join(moveTarget, "a.txt.vortex_backup"), "utf8"), "game-a");
+
+  const purged = await client.request("purge", {
+    staging: moveStaging,
+    target: moveTarget,
+    manifest: moveManifest,
+    instance: "test",
+    method: "move_activator",
+    game: "skyrimse",
+  });
+  assert.equal(purged.report.failures.length, 0);
+  assert.equal(readFileSync(join(moveStaging, "ModA", "a.txt"), "utf8"), "mod-a");
+  assert.equal(existsSync(join(moveStaging, "ModA", "a.txt.vortex_lnk")), false);
+  assert.equal(readFileSync(join(moveTarget, "a.txt"), "utf8"), "game-a");
+});

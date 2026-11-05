@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import type { NativeDeployRequest } from "@vortex/shared/ipc";
+import type { NativeDeployRequest, NativeDeploySingleRequest } from "@vortex/shared/ipc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../logging", () => ({ log: vi.fn() }));
@@ -36,6 +36,7 @@ import {
   cancelCollectionJobNatively,
   canDeployNatively,
   collectionStatusNatively,
+  deploySingleModNatively,
   deployWithNativeCore,
   downloadFileNatively,
   extractArchiveNatively,
@@ -58,6 +59,7 @@ interface FakeNativeDeploy {
   status: ReturnType<typeof vi.fn>;
   plan: ReturnType<typeof vi.fn>;
   deploy: ReturnType<typeof vi.fn>;
+  deploySingle: ReturnType<typeof vi.fn>;
   purge: ReturnType<typeof vi.fn>;
   stagingStatus: ReturnType<typeof vi.fn>;
   installApply: ReturnType<typeof vi.fn>;
@@ -107,6 +109,7 @@ beforeEach(() => {
     status: vi.fn(() => Promise.resolve({ enabled: true, available: true, version: "0.1.0" })),
     plan: vi.fn(),
     deploy: vi.fn(),
+    deploySingle: vi.fn(),
     purge: vi.fn(),
     stagingStatus: vi.fn(),
     installApply: vi.fn(),
@@ -142,8 +145,22 @@ afterEach(() => {
 
 describe("native deployment adapter", () => {
   it("stays disabled for methods the core does not implement", async () => {
-    expect(await canDeployNatively({ id: "move_activator" } as never)).toBe(false);
+    expect(await canDeployNatively({ id: "copy_activator" } as never)).toBe(false);
     expect(nativeDeploy.status).not.toHaveBeenCalled();
+  });
+
+  it("enables move deployment when the core advertises it", async () => {
+    nativeDeploy.status.mockResolvedValue({
+      enabled: true,
+      available: true,
+      capabilities: ["deploy.move"],
+    });
+    expect(await canDeployNatively({ id: "move_activator" } as never)).toBe(true);
+  });
+
+  it("keeps move deployment on the TS path without the capability", async () => {
+    nativeDeploy.status.mockResolvedValue({ enabled: true, available: true, capabilities: [] });
+    expect(await canDeployNatively({ id: "move_activator" } as never)).toBe(false);
   });
 
   it("enables symlink deployment when the core advertises it", async () => {
@@ -158,6 +175,73 @@ describe("native deployment adapter", () => {
   it("keeps symlink deployment on the TS path without the capability", async () => {
     nativeDeploy.status.mockResolvedValue({ enabled: true, available: true, capabilities: [] });
     expect(await canDeployNatively({ id: "symlink_activator" } as never)).toBe(false);
+  });
+
+  it("deploys a single mod with the later-source blacklist", async () => {
+    const { api } = makeApi();
+    nativeDeploy.status.mockResolvedValue({
+      enabled: true,
+      available: true,
+      capabilities: ["deploy.move", "deploy.single"],
+    });
+    const captured: NativeDeploySingleRequest[] = [];
+    nativeDeploy.deploySingle.mockImplementation((request: NativeDeploySingleRequest) => {
+      captured.push(request);
+      return Promise.resolve({
+        operation: "op-single",
+        report: {
+          linked: 1,
+          removed: 0,
+          backedUp: 0,
+          restored: 0,
+          skipped: 0,
+          failures: [],
+        },
+        files: [
+          { relPath: "a.txt", source: "ModA", target: "Data", time: 123 },
+          { relPath: "b.txt", source: "ModB", target: "Data", time: 456 },
+        ],
+      });
+    });
+
+    const result = await deploySingleModNatively(
+      api as never,
+      "skyrimse",
+      "/staging",
+      "/game/Data",
+      {
+        id: "mod-a",
+        type: "textures",
+        installationPath: "ModA",
+        fileOverrides: ["/game/Data/overridden.txt"],
+      } as never,
+      "textures",
+      { id: "move_activator" } as never,
+      true,
+      "Data",
+      ["b.txt"],
+    );
+
+    expect(captured[0]).toMatchObject({
+      staging: "/staging",
+      target: "/game/Data",
+      manifest: path.join("/game/Data", "vortex.deployment.textures.json"),
+      instance: "instance-1",
+      method: "move_activator",
+      game: "skyrimse",
+      enable: true,
+      mod: {
+        installationPath: "ModA",
+        sourceName: "ModA",
+        target: "Data",
+        fileOverrides: ["/game/Data/overridden.txt"],
+      },
+      options: { blacklist: ["b.txt"] },
+    });
+    expect(result).toEqual([
+      { relPath: "a.txt", source: "ModA", target: "Data", time: 123 },
+      { relPath: "b.txt", source: "ModB", target: "Data", time: 456 },
+    ]);
   });
 
   it("maps Vortex mods and the merge source onto the wire request", async () => {

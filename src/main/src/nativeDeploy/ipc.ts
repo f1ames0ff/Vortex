@@ -9,6 +9,7 @@ import type {
   NativeCollectionStartRequest,
   NativeDepsRequest,
   NativeDeployRequest,
+  NativeDeploySingleRequest,
   NativeDownloadRequest,
   NativePluginOrderRequest,
   NativePluginOrderWriteRequest,
@@ -64,6 +65,10 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle("nativeDeploy:deploy", (_event, request: NativeDeployRequest) =>
     nativeCoreClient().deploy(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:deploySingle", (_event, request: NativeDeploySingleRequest) =>
+    nativeCoreClient().deploySingle(request),
   );
 
   betterIpcMain.handle("nativeDeploy:purge", (_event, request: NativePurgeRequest) =>

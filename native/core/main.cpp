@@ -60,6 +60,23 @@ IndexStore& indexFor(CoreState& state, const fs::path& stagingPath) {
     return *found->second;
 }
 
+ModSpec readModSpec(const json& value) {
+    if (!value.is_object()) {
+        throw std::runtime_error("params.mod must be an object");
+    }
+    ModSpec mod;
+    mod.installationPath = value.value("installationPath", std::string{});
+    mod.sourceName = value.value("sourceName", mod.installationPath);
+    mod.target = value.value("target", std::string{});
+    if (value.contains("fileOverrides") && value["fileOverrides"].is_array()) {
+        mod.fileOverrides = value["fileOverrides"].get<std::vector<std::string>>();
+    }
+    if (mod.installationPath.empty()) {
+        throw std::runtime_error("params.mod.installationPath is required");
+    }
+    return mod;
+}
+
 std::vector<ModSpec> readMods(const json& params) {
     if (!params.contains("mods") || !params["mods"].is_array()) {
         throw std::runtime_error("params.mods must be an array");
@@ -86,6 +103,7 @@ std::vector<ModSpec> readMods(const json& params) {
 
 PlanOptions readOptions(const json& params) {
     PlanOptions options;
+    options.deploymentMethod = params.value("method", std::string("hardlink"));
     if (params.contains("options") && params["options"].is_object()) {
         const auto& raw = params["options"];
         options.caseInsensitive = raw.value("caseInsensitive", false);
@@ -706,7 +724,7 @@ json dispatch(CoreState& state, const Request& request) {
               "collection.status", "collection.next", "collection.member", "collection.pause",
               "collection.cancel", "download.queue", "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
-              "deploy.symlink", "purge"}},
+              "deploy.symlink", "deploy.move", "deploy.single", "purge"}},
             {"pid", 0},
         };
     }
@@ -1079,7 +1097,7 @@ json dispatch(CoreState& state, const Request& request) {
     }
 
     if (request.method != "plan" && request.method != "deploy" &&
-        request.method != "purge") {
+        request.method != "deploy.single" && request.method != "purge") {
         throw std::runtime_error("unknown method: " + request.method);
     }
 
@@ -1108,6 +1126,42 @@ json dispatch(CoreState& state, const Request& request) {
         return {
             {"report", reportJson(report)},
             {"operation", operation},
+            {"files", filesJson(loadManifest(manifestPath).files)},
+        };
+    }
+
+    if (request.method == "deploy.single") {
+        if (!params.contains("mod")) {
+            throw std::runtime_error("params.mod is required");
+        }
+        auto previous = loadOrCreate(manifestPath, params);
+        const auto options = readOptions(params);
+        const auto mod = readModSpec(params["mod"]);
+        const bool enable = params.value("enable", true);
+        auto& index = indexFor(state, stagingPath);
+        const auto plan =
+            planSingleMod(stagingPath, targetPath, mod, previous, options, index, enable);
+        index.flush();
+
+        const auto operation = platform::operation_id();
+        Journal journal(journalDirectory(params, stagingPath) / (operation + ".jsonl"),
+                        operation);
+        ExecutorContext context;
+        context.stagingPath = stagingPath;
+        context.targetPath = targetPath;
+        context.manifestPath = manifestPath;
+        context.previous = std::move(previous);
+        context.instance = params.value("instance", context.previous.instance);
+        context.deploymentMethod = params.value("method", std::string("hardlink"));
+        context.gameId = params.value("game", context.previous.gameId.value_or(""));
+        context.caseInsensitive =
+            options.caseInsensitive || platform::is_case_insensitive(targetPath);
+
+        const auto report = applyDeployment(plan, context, journal);
+        return {
+            {"report", reportJson(report)},
+            {"operation", operation},
+            {"plan", planJson(plan)},
             {"files", filesJson(loadManifest(manifestPath).files)},
         };
     }

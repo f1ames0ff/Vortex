@@ -49,6 +49,7 @@ struct ModSpec {
 struct PlanOptions {
     bool caseInsensitive = false;
     std::vector<std::string> extraBlacklist;
+    std::string deploymentMethod = "hardlink";
 };
 
 struct ChangedFile {

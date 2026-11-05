@@ -44,6 +44,7 @@ import type {
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
+  NativeDeploySingleRequest,
   NativeDeployStatus,
   NativeHashFilesRequest,
   NativeHashFilesResult,
@@ -419,6 +420,7 @@ export interface InvokeChannels {
   "nativeDeploy:status": () => Promise<NativeDeployStatus>;
   "nativeDeploy:plan": (request: NativeDeployRequest) => Promise<NativeDeployPlanSummary>;
   "nativeDeploy:deploy": (request: NativeDeployRequest) => Promise<NativeDeployResult>;
+  "nativeDeploy:deploySingle": (request: NativeDeploySingleRequest) => Promise<NativeDeployResult>;
   "nativeDeploy:purge": (request: NativePurgeRequest) => Promise<NativePurgeResult>;
   "nativeDeploy:stagingStatus": (request: NativeStagingRequest) => Promise<NativeStagingResult>;
   "nativeDeploy:installApply": (request: NativeInstallRequest) => Promise<NativeInstallResult>;

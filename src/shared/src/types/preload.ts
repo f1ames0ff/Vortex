@@ -53,6 +53,7 @@ import type {
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
+  NativeDeploySingleRequest,
   NativeDeployStatus,
   NativeHashFilesRequest,
   NativeHashFilesResult,
@@ -637,6 +638,9 @@ export interface NativeDeployApi {
 
   /** Applies a deployment through `vortex-core`. */
   deploy(request: NativeDeployRequest): Promise<NativeDeployResult>;
+
+  /** Deploys or undeploys a single mod without touching other sources. */
+  deploySingle(request: NativeDeploySingleRequest): Promise<NativeDeployResult>;
 
   /** Removes a deployment and restores backups through `vortex-core`. */
   purge(request: NativePurgeRequest): Promise<NativePurgeResult>;

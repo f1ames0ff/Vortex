@@ -265,6 +265,124 @@ void testSymlinkDeployAndPurge() {
 #endif
 }
 
+void testMoveDeployAndPurge() {
+    const auto root = makeRoot("move-deploy");
+    const auto staging = root / "staging";
+    const auto target = root / "target";
+    const auto manifestPath = root / "manifest.json";
+    const auto mod = staging / "ModA";
+    writeFile(mod / "a.txt", "mod-a");
+    writeFile(mod / "nested" / "b.txt", "mod-b");
+    writeFile(target / "a.txt", "game-a");
+
+    const std::vector<ModSpec> mods = {{"ModA", "ModA", "", {}}};
+    PlanOptions planOptions;
+    planOptions.deploymentMethod = "move_activator";
+    IndexStore index(staging);
+    auto plan = planDeployment(staging, target, mods, Manifest{}, planOptions, index);
+    check(plan.added.size() == 2, "move plan adds both files");
+
+    Journal journal(root / "journal.jsonl", platform::operation_id());
+    ExecutorContext context;
+    context.stagingPath = staging;
+    context.targetPath = target;
+    context.manifestPath = manifestPath;
+    context.instance = "test";
+    context.deploymentMethod = "move_activator";
+
+    const auto report = applyDeployment(plan, context, journal);
+    check(report.failures.empty(), "move deploy should not fail");
+    check(report.linked == 2, "move deploy count");
+    check(!fs::exists(mod / "a.txt"), "move removes the staged source");
+    check(fs::exists(mod / "a.txt.vortex_lnk"), "move leaves a staged link");
+    check(readFile(target / "a.txt") == "mod-a", "move deploys content");
+    check(readFile(target / "nested" / "b.txt") == "mod-b", "move creates nested output");
+    check(readFile(target / "a.txt.vortex_backup") == "game-a", "move backs up the game file");
+
+    const auto saved = loadManifest(manifestPath);
+    check(saved.deploymentMethod == "move_activator", "move manifest keeps the activator id");
+    check(saved.files.size() == 2, "move manifest file count");
+
+    IndexStore secondIndex(staging);
+    const auto secondPlan =
+        planDeployment(staging, target, mods, saved, planOptions, secondIndex);
+    check(secondPlan.added.empty(), "move replan adds nothing");
+    check(secondPlan.removed.empty(), "move replan removes nothing");
+
+    ExecutorContext purgeContext = context;
+    purgeContext.previous = saved;
+    Journal purgeJournal(root / "purge.jsonl", platform::operation_id());
+    const auto purgeReport = purgeDeployment(saved, purgeContext, purgeJournal);
+    check(purgeReport.failures.empty(), "move purge should not fail");
+    check(readFile(mod / "a.txt") == "mod-a", "move purge restores the staged file");
+    check(readFile(mod / "nested" / "b.txt") == "mod-b", "move purge restores nested files");
+    check(!fs::exists(mod / "a.txt.vortex_lnk"), "move purge removes the staged link");
+    check(readFile(target / "a.txt") == "game-a", "move purge restores the game file");
+    check(!fs::exists(target / "nested" / "b.txt"), "move purge removes deployed files");
+
+    fs::remove_all(root);
+}
+
+void testSingleModActivation() {
+    const auto root = makeRoot("single-mod");
+    const auto staging = root / "staging";
+    const auto target = root / "target";
+    const auto manifestPath = root / "manifest.json";
+    writeFile(staging / "ModA" / "a.txt", "mod-a");
+    writeFile(staging / "ModB" / "b.txt", "mod-b");
+
+    const ModSpec modA{"ModA", "ModA", "", {}};
+    const ModSpec modB{"ModB", "ModB", "", {}};
+    PlanOptions options;
+
+    IndexStore index(staging);
+    auto previous = Manifest{};
+    previous.instance = "test";
+    previous.stagingPath = staging.string();
+    previous.targetPath = target.string();
+    const auto planB = planDeployment(staging, target, {modB}, previous, options, index);
+    Journal journalB(root / "journal-b.jsonl", platform::operation_id());
+    ExecutorContext context;
+    context.stagingPath = staging;
+    context.targetPath = target;
+    context.manifestPath = manifestPath;
+    context.instance = "test";
+    context.deploymentMethod = "hardlink";
+    check(applyDeployment(planB, context, journalB).failures.empty(), "deploy ModB");
+    check(readFile(target / "b.txt") == "mod-b", "ModB deployed");
+
+    const auto saved = loadManifest(manifestPath);
+    IndexStore singleIndex(staging);
+    const auto enablePlan =
+        planSingleMod(staging, target, modA, saved, options, singleIndex, true);
+    check(enablePlan.added.size() == 1, "single enable adds only ModA");
+    check(enablePlan.removed.empty(), "single enable keeps ModB");
+    Journal enableJournal(root / "journal-enable.jsonl", platform::operation_id());
+    ExecutorContext enableContext = context;
+    enableContext.previous = saved;
+    check(applyDeployment(enablePlan, enableContext, enableJournal).failures.empty(),
+          "single enable applies");
+    check(readFile(target / "a.txt") == "mod-a", "ModA deployed by single activation");
+    check(readFile(target / "b.txt") == "mod-b", "ModB survives single activation");
+
+    const auto afterEnable = loadManifest(manifestPath);
+    check(afterEnable.files.size() == 2, "single activation manifest has both mods");
+    IndexStore disableIndex(staging);
+    const auto disablePlan =
+        planSingleMod(staging, target, modA, afterEnable, options, disableIndex, false);
+    check(disablePlan.removed.size() == 1, "single disable removes ModA");
+    Journal disableJournal(root / "journal-disable.jsonl", platform::operation_id());
+    ExecutorContext disableContext = context;
+    disableContext.previous = afterEnable;
+    check(applyDeployment(disablePlan, disableContext, disableJournal).failures.empty(),
+          "single disable applies");
+    check(!fs::exists(target / "a.txt"), "single disable removes the deployed file");
+    check(readFile(target / "b.txt") == "mod-b", "single disable keeps ModB");
+    check(loadManifest(manifestPath).files.size() == 1, "single disable manifest shrinks");
+
+    fs::remove_all(root);
+}
+
 void testPurgeKeepsFailedEntries() {
     const auto root = makeRoot("purge-failure");
     const auto staging = root / "staging";
@@ -1100,6 +1218,8 @@ int main() {
         testPlannerDiff();
         testDeployAndPurge();
         testSymlinkDeployAndPurge();
+        testMoveDeployAndPurge();
+        testSingleModActivation();
         testPurgeKeepsFailedEntries();
         testStaleBackupReportsActionableFailure();
         testFileErrorsBecomeFailures();

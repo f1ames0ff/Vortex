@@ -161,6 +161,7 @@ import { findModByRef } from "./util/findModByRef";
 import ModHistory from "./util/ModHistory";
 import renderModName from "./util/modName";
 import { getModSources, registerModSource } from "./util/modSource";
+import { deploySingleModNatively } from "./util/nativeDeploy";
 import sortMods from "./util/sort";
 import { setResolvedCB } from "./util/testModReference";
 import ActivationButton from "./views/ActivationButton";
@@ -1342,6 +1343,38 @@ function onDeploySingleMod(api: IExtensionApi) {
             profile !== undefined
               ? await doSortMods(api, profile, state.persistent.mods[gameId], VortexModId(mod.id))
               : [];
+          const laterSources = laterStagingFolders(sorted, mod);
+          const laterSourceNames = new Set(Array.from(laterSources, (source) => String(source)));
+          const laterRelPaths = lastActivation
+            .filter(
+              (file) => (file.target ?? "") === subdir(mod) && laterSourceNames.has(file.source),
+            )
+            .map((file) => `${mod.installationPath}/${file.relPath}`);
+          const nativeActivation = await deploySingleModNatively(
+            api,
+            gameId,
+            stagingPath,
+            dataPath,
+            mod,
+            mod.type,
+            activator,
+            true,
+            subdir(mod),
+            laterRelPaths,
+          );
+          if (nativeActivation !== undefined) {
+            await doSaveActivation(
+              api,
+              gameId,
+              mod.type,
+              dataPath,
+              stagingPath,
+              nativeActivation,
+              activator.id,
+            );
+            reportRecordedFailures(api, gameId);
+            return;
+          }
           await activateSingleMod({
             method: activator,
             game,
@@ -1351,9 +1384,33 @@ function onDeploySingleMod(api: IExtensionApi) {
             mod,
             modPath,
             subDir: subdir(mod),
-            laterSources: laterStagingFolders(sorted, mod),
+            laterSources,
           });
         } else {
+          const nativeActivation = await deploySingleModNatively(
+            api,
+            gameId,
+            stagingPath,
+            dataPath,
+            mod,
+            mod.type,
+            activator,
+            false,
+            subdir(mod),
+          );
+          if (nativeActivation !== undefined) {
+            await doSaveActivation(
+              api,
+              gameId,
+              mod.type,
+              dataPath,
+              stagingPath,
+              nativeActivation,
+              activator.id,
+            );
+            reportRecordedFailures(api, gameId);
+            return;
+          }
           await activator.prepare(dataPath, false, lastActivation, normalize);
           await activator.deactivate(modPath, subdir(mod), mod.installationPath);
         }

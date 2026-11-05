@@ -19,6 +19,9 @@ std::uintmax_t link_count(const std::filesystem::path& path);
 bool is_hardlink_to(const std::filesystem::path& source, const std::filesystem::path& target);
 bool is_symlink_to(const std::filesystem::path& source, const std::filesystem::path& target);
 
+/** Map an activator id (`move_activator`) to its on-disk method (`move`). */
+std::string normalize_deployment_method(const std::string& method);
+
 std::filesystem::path backup_path(const std::filesystem::path& target);
 void atomic_replace(const std::filesystem::path& source, const std::filesystem::path& destination);
 void sync_file(const std::filesystem::path& path);

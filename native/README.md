@@ -46,6 +46,7 @@ Supported requests:
 {"id":2,"method":"scan","params":{"staging":"/staging"}}
 {"id":3,"method":"plan","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","mods":[{"installationPath":"ModA"}]}}
 {"id":4,"method":"deploy","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","mods":[{"installationPath":"ModA"}],"instance":"...","method":"hardlink","game":"skyrimse"}}
+{"id":4,"method":"deploy.single","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","instance":"...","method":"move_activator","game":"skyrimse","enable":true,"mod":{"installationPath":"ModA","target":"Data"}}}
 {"id":5,"method":"purge","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json"}}
 {"id":6,"method":"staging.status","params":{"staging":"/staging","mods":[{"id":"mod-a","installationPath":"ModA"},{"id":"mod-b","installationPath":"ModB"}]}}
 {"id":7,"method":"install.apply","params":{"temp":"/tmp/ModA.extracted","destination":"/staging/ModA","instructions":[{"type":"hardlink","source":"textures/a.dds","destination":"textures/a.dds"},{"type":"write","destination":"meta.ini","data":"..."}]}}
@@ -100,6 +101,20 @@ durable `install.begin`, per-failure `install.failure` entries, and a durable
 `install.complete` or `install.failed`. It defaults to
 `<staging>/.vortex-install-journal`. FOMOD script execution stays in the
 existing .NET host; the core only receives its resolved instructions.
+
+Deployment supports `hardlink`, `symlink` and `move`. Move deployment writes a
+`<source>.vortex_lnk` JSON placeholder into staging, backs up an existing game
+file as `.vortex_backup`, then moves the staged file to the target. The planner
+rebuilds the desired deployment from those placeholders, so a move deployment
+can be re-planned without rescanning the now-empty staging files. Purge moves
+each target back to staging, removes the placeholder and restores the backup;
+cross-device moves fall back to copy + delete.
+
+`deploy.single` merges one mod into the existing manifest and applies only that
+mod's added/changed/removed entries, leaving every other source untouched. It
+accepts a blacklist of paths owned by later mods in load order, which
+`InstallManager`-adjacent activation code uses to preserve priority during
+single-mod activation.
 
 `archive.list` and `archive.extract` invoke the existing 7-Zip binary; the core
 does not embed or reimplement the archiver. Every listed path is validated
@@ -236,6 +251,9 @@ that may start, and completion/failure/ignore statuses flow back through
 `collection.member`. The TypeScript phase tracker remains the fallback, and the
 actual download/install executor is still TypeScript.
 
+Single-mod activation now calls `deploy.single` with the activator id and the
+later-source blacklist; full deployment already routes `move_activator`,
+`symlink_activator` and `hardlink_activator` through the same executor.
 The gamebryo plugin manager sends its Data-folder and enabled-mod directory
 scans to `plugins.scan`; `PluginPersistor` reads and writes the order files
 through `plugins.loadOrder.*`. The TypeScript implementations remain the
@@ -243,7 +261,9 @@ fallback when the core is disabled or lacks a capability.
 
 Known integration gaps for the next slice:
 
-- Move deployment and single-mod activation still use the TypeScript path.
+- Single-mod activation and move deployment use the core when its
+  `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
+  back to the TypeScript activator.
 - Downloads use the external `curl` binary. Linux distributions ship it;
   Windows 10+ includes `curl.exe`. Set `VORTEX_CURL_PATH` to override the
   binary. Curl honours the standard `http_proxy`/`https_proxy` environment

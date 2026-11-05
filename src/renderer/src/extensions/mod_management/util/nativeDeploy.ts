@@ -18,6 +18,7 @@ import type {
   NativeDepsRequest,
   NativeDependencyEntry,
   NativeDeployRequest,
+  NativeDeploySingleRequest,
   NativeDeployStatus,
   NativeDeployedFile,
   NativeDownloadInfo,
@@ -46,7 +47,11 @@ import { manifestPaths } from "./activationStore";
 
 /** The deployment method whose on-disk behaviour the native core implements. */
 export const NATIVE_DEPLOY_METHOD_ID = "hardlink_activator";
-const NATIVE_DEPLOY_METHOD_IDS = new Set([NATIVE_DEPLOY_METHOD_ID, "symlink_activator"]);
+const NATIVE_DEPLOY_METHOD_IDS = new Set([
+  NATIVE_DEPLOY_METHOD_ID,
+  "symlink_activator",
+  "move_activator",
+]);
 
 let statusPromise: Promise<NativeDeployStatus> | undefined;
 
@@ -93,12 +98,24 @@ export async function canDeployNatively(method: IDeploymentMethod): Promise<bool
   if (!status.enabled || !status.available) {
     return false;
   }
-  return method.id !== "symlink_activator" || coreSupports(status, "deploy.symlink");
+  if (method.id === "symlink_activator") {
+    return coreSupports(status, "deploy.symlink", false);
+  }
+  if (method.id === "move_activator") {
+    return coreSupports(status, "deploy.move", false);
+  }
+  return true;
 }
 
 /** A core from before the capability handshake has no capability list. */
-function coreSupports(status: NativeDeployStatus, capability: string): boolean {
-  return status.capabilities === undefined || status.capabilities.includes(capability);
+function coreSupports(
+  status: NativeDeployStatus,
+  capability: string,
+  legacyDefault: boolean = true,
+): boolean {
+  return status.capabilities === undefined
+    ? legacyDefault
+    : status.capabilities.includes(capability);
 }
 
 function isUnknownMethod(err: unknown): boolean {
@@ -647,6 +664,79 @@ export async function deployWithNativeCore(
  * does not apply; otherwise mutates `lastDeployment` to the entries the core
  * could not remove and returns `true`.
  */
+/**
+ * Deploy or undeploy one mod through the core. The core merges the requested
+ * mod into the existing manifest, so other sources keep their deployment and
+ * move deployment can reconstruct files from `.vortex_lnk` placeholders.
+ */
+export async function deploySingleModNatively(
+  api: IExtensionApi,
+  gameId: string,
+  stagingPath: string,
+  destinationPath: string,
+  mod: IMod,
+  typeId: string,
+  method: IDeploymentMethod,
+  enable: boolean,
+  subDir: string,
+  blacklist: string[] = [],
+): Promise<IDeployedFile[] | undefined> {
+  if (!(await canDeployNatively(method)) || mod.installationPath === undefined) {
+    return undefined;
+  }
+
+  const state = api.store.getState();
+  const manifest = manifestPaths(destinationPath, stagingPath, typeId).manifestPath;
+  const request: NativeDeploySingleRequest = {
+    staging: stagingPath,
+    target: destinationPath,
+    manifest,
+    instance: state.app.instanceId,
+    method: method.id,
+    game: gameId,
+    enable,
+    mod: {
+      installationPath: mod.installationPath,
+      sourceName: mod.installationPath,
+      target: subDir,
+      fileOverrides: mod.fileOverrides,
+    },
+    options: blacklist.length > 0 ? { blacklist } : undefined,
+  };
+
+  log("info", "deploying single mod through native core", {
+    gameId,
+    typeId,
+    modId: mod.id,
+    enable,
+    method: method.id,
+  });
+
+  let result: Awaited<ReturnType<typeof window.api.nativeDeploy.deploySingle>>;
+  try {
+    result = await window.api.nativeDeploy.deploySingle(request);
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+  if (result.report.failures.length > 0) {
+    api.store.dispatch(
+      addDeploymentFailures(
+        gameId,
+        result.report.failures.map((failure) => ({
+          source: failure.source,
+          relPath: failure.relPath,
+          outputPath: failure.outputPath,
+          message: failure.message,
+        })),
+      ),
+    );
+  }
+  return (result.files ?? []).map(toDeployedFile);
+}
+
 export async function purgeWithNativeCore(
   api: IExtensionApi,
   gameId: string,

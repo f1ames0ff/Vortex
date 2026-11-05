@@ -97,6 +97,19 @@ bool is_hardlink_to(const fs::path& source, const fs::path& target) {
     return is_same_file(source, target);
 }
 
+std::string normalize_deployment_method(const std::string& method) {
+    if (method == "hardlink_activator") {
+        return "hardlink";
+    }
+    if (method == "symlink_activator" || method == "symlink_activator_elevated") {
+        return "symlink";
+    }
+    if (method == "move_activator") {
+        return "move";
+    }
+    return method;
+}
+
 bool is_symlink_to(const fs::path& source, const fs::path& target) {
     std::error_code ec;
     const auto status = fs::symlink_status(target, ec);

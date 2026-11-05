@@ -32,6 +32,7 @@ import type {
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
+  NativeDeploySingleRequest,
   NativeDeployStatus,
   NativeHashFilesRequest,
   NativeHashFilesResult,
@@ -175,6 +176,10 @@ export class NativeCoreClient {
 
   deploy(request: NativeDeployRequest): Promise<NativeDeployResult> {
     return this.#request("deploy", { ...request, includeFiles: true });
+  }
+
+  deploySingle(request: NativeDeploySingleRequest): Promise<NativeDeployResult> {
+    return this.#request("deploy.single", { ...request, includeFiles: true });
   }
 
   purge(request: NativePurgeRequest): Promise<NativePurgeResult> {
