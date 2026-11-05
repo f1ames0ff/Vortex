@@ -57,7 +57,10 @@ Supported requests:
 {"id":13,"method":"deps.matchDownload","params":{"reference":{"tag":"rule-tag"},"downloads":[...]}}
 {"id":14,"method":"deps.resolve","params":{"rules":[...],"mods":[...],"downloads":[...]}}
 {"id":15,"method":"collection.plan","params":{"rules":[...],"mods":[...],"downloads":[...]}}
-{"id":16,"method":"shutdown","params":{}}
+{"id":16,"method":"plugins.scan","params":{"directories":[{"path":"/game/Data","extensions":[".esm",".esp",".esl"]}]}}
+{"id":17,"method":"plugins.loadOrder.read","params":{"directory":"/game/AppData"}}
+{"id":18,"method":"plugins.loadOrder.write","params":{"directory":"/game/AppData","plugins":["*Skyrim.esm"],"loadOrder":["Skyrim.esm"]}}
+{"id":19,"method":"shutdown","params":{}}
 ```
 
 Every response echoes `id` and contains either `result` or `error`. Commands
@@ -102,6 +105,12 @@ archive-name expressions, version ranges and install-spec equality.
 The matcher covers the common semver range forms (`^`, `~`, comparators,
 wildcards, `||`); hyphen ranges and full minimatch character classes are not
 implemented yet.
+
+`plugins.scan` scans top-level directories for the requested plugin
+extensions, preserving file-name casing while exposing the lower-case plugin
+id and ghost flag. `plugins.loadOrder.read`/`write` handle `plugins.txt` and
+`loadorder.txt`, including the `Plugins.txt` capitalisation the game creates in
+Proton prefixes, and write the Vortex header with CRLF rows atomically.
 
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.
@@ -182,6 +191,11 @@ Collection resolution is also moving across: `gatherDependencies` asks
 `InstallDriver` uses `collection.plan` to compute the missing-member set.
 Both keep the existing TypeScript resolver as the fallback when the flag is
 off or the core lacks the capability.
+
+The gamebryo plugin manager sends its Data-folder and enabled-mod directory
+scans to `plugins.scan`; `PluginPersistor` reads and writes the order files
+through `plugins.loadOrder.*`. The TypeScript implementations remain the
+fallback when the core is disabled or lacks a capability.
 
 Known integration gaps for the next slice:
 

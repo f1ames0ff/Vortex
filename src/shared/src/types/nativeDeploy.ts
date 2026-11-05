@@ -334,3 +334,42 @@ export interface NativeDepsRequest {
 export interface NativeDepsResolveResult {
   dependencies: NativeDependencyEntry[];
 }
+
+export interface NativePluginFile {
+  name: string;
+  pluginId: string;
+  ghost: boolean;
+}
+
+export interface NativePluginScanDirectory {
+  path: string;
+  files: NativePluginFile[];
+  error?: string;
+}
+
+export interface NativePluginScanRequest {
+  directories: Array<{ path: string; extensions: string[] }>;
+}
+
+export interface NativePluginScanResult {
+  directories: NativePluginScanDirectory[];
+}
+
+export interface NativePluginOrderRequest {
+  directory: string;
+}
+
+export interface NativePluginOrderResult {
+  pluginsFile: string;
+  loadOrderFile: string;
+  pluginsHeader?: string;
+  loadOrderHeader?: string;
+  plugins: string[];
+  loadOrder: string[];
+  error?: string;
+}
+
+export interface NativePluginOrderWriteRequest extends NativePluginOrderRequest {
+  plugins: string[];
+  loadOrder: string[];
+}

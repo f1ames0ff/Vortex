@@ -49,6 +49,11 @@ import type {
   NativeHashFilesRequest,
   NativeHashFilesResult,
   NativeInstallRequest,
+  NativePluginOrderRequest,
+  NativePluginOrderResult,
+  NativePluginOrderWriteRequest,
+  NativePluginScanRequest,
+  NativePluginScanResult,
   NativeInstallResult,
   NativePurgeRequest,
   NativePurgeResult,
@@ -648,6 +653,15 @@ export interface NativeDeployApi {
 
   /** Builds the phase/member plan for a collection in the core. */
   collectionPlan(request: NativeDepsRequest): Promise<NativeCollectionPlan>;
+
+  /** Scans directories for plugin files in the core. */
+  pluginsScan(request: NativePluginScanRequest): Promise<NativePluginScanResult>;
+
+  /** Reads plugins.txt/loadorder.txt through the core. */
+  pluginsOrderRead(request: NativePluginOrderRequest): Promise<NativePluginOrderResult>;
+
+  /** Writes plugins.txt/loadorder.txt through the core. */
+  pluginsOrderWrite(request: NativePluginOrderWriteRequest): Promise<NativePluginOrderResult>;
 }
 
 export interface FeatureFlagsApi {

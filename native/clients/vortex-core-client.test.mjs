@@ -183,6 +183,31 @@ test("resolves dependencies and plans a collection", async () => {
   assert.equal(plan.totalOptional, 1);
 });
 
+test("scans plugins and reads/writes the load order", async () => {
+  const pluginDir = join(root, "plugins");
+  mkdirSync(pluginDir, { recursive: true });
+  writeFileSync(join(pluginDir, "Skyrim.esm"), "esm");
+  writeFileSync(join(pluginDir, "Mod.ESP"), "esp");
+  writeFileSync(join(pluginDir, "Disabled.esp.ghost"), "ghost");
+
+  const scan = await client.pluginsScan({
+    directories: [{ path: pluginDir, extensions: [".esm", ".esp", ".esl"] }],
+  });
+  assert.equal(scan.directories.length, 1);
+  assert.equal(scan.directories[0].files.length, 3);
+  assert.ok(scan.directories[0].files.some((file) => file.pluginId === "mod.esp"));
+
+  const written = await client.pluginsOrderWrite({
+    directory: pluginDir,
+    plugins: ["*Skyrim.esm", "Mod.esp"],
+    loadOrder: ["Skyrim.esm", "Mod.esp"],
+  });
+  assert.equal(written.error, undefined);
+  const read = await client.pluginsOrderRead({ directory: pluginDir });
+  assert.deepEqual(read.plugins, ["*Skyrim.esm", "Mod.esp"]);
+  assert.deepEqual(read.loadOrder, ["Skyrim.esm", "Mod.esp"]);
+});
+
 test("lists and extracts archives through 7-Zip", { skip: !existsSync(sevenZip) }, async () => {
   const archive = join(root, "sample.zip");
   execFileSync(sevenZip, ["a", "-tzip", archive, "a.txt"], {

@@ -15,11 +15,17 @@ import { getGame } from "../../gamemode_management/util/getGame";
 import { setDeploymentNecessary } from "../../mod_management/actions/deployment";
 import { installPathForGame } from "../../mod_management/selectors";
 import { getCurrentActivator } from "../../mod_management/util/deploymentMethods";
+import { scanPluginsNatively } from "../../mod_management/util/nativeDeploy";
 import { setPluginList } from "../actions/plugins";
 import { ESPFile } from "../esp/ESPFile";
 import type { IPlugins } from "../types/IPlugins";
 import type { IStateWithGamebryo } from "../types/IStateWithGamebryo";
-import { isNativePlugin, pluginFormat, supportsBlueprintPlugins } from "./gameSupport";
+import {
+  isNativePlugin,
+  pluginExtensions,
+  pluginFormat,
+  supportsBlueprintPlugins,
+} from "./gameSupport";
 import { selectPluginFiles } from "./isPlugin";
 import type PluginPersistor from "./PluginPersistor";
 import { withFileRetry } from "./PluginPersistor";
@@ -72,6 +78,16 @@ async function updatePluginListImpl(
   const modType = typeof dataModType === "string" ? dataModType : "";
   const modPath = game.getModPaths(discovery.path)[modType];
   const scanGameFolder = async (): Promise<string[] | undefined> => {
+    const native = await scanPluginsNatively([
+      { path: modPath, extensions: pluginExtensions(gameId) },
+    ]).catch(() => undefined);
+    if (native !== undefined) {
+      const scanned = native.get(modPath);
+      if (scanned !== undefined && scanned.error === undefined) {
+        return scanned.files.map((file) => file.name);
+      }
+    }
+
     let fileNames: string[];
     try {
       fileNames = await withFileRetry(() => readdir(modPath));
@@ -106,6 +122,20 @@ async function updatePluginListImpl(
   const installBasePath = installPathForGame(state, gameId);
   const readErrors: string[] = [];
 
+  const modPaths = new Map<string, string>();
+  for (const modId of enabledModIds) {
+    const mod = gameMods[modId];
+    if (mod?.installationPath !== undefined) {
+      modPaths.set(modId, path.join(installBasePath, mod.installationPath));
+    }
+  }
+  const nativeModScans = await scanPluginsNatively(
+    Array.from(modPaths.values()).map((modPath) => ({
+      path: modPath,
+      extensions: pluginExtensions(gameId),
+    })),
+  ).catch(() => undefined);
+
   // staged plugins first, so a deployed copy can be attributed to the mod it came from
   await Promise.all(
     enabledModIds.map(async (modId) => {
@@ -115,13 +145,34 @@ async function updatePluginListImpl(
         return;
       }
       const overridden = new Set((mod.fileOverrides ?? []).map((name) => path.basename(name)));
-      const modInstPath = path.join(installBasePath, mod.installationPath);
+      const modInstPath = modPaths.get(modId);
+      if (modInstPath === undefined) {
+        log("error", "mod installation path missing", { gameId, modId });
+        return;
+      }
       try {
-        const fileNames = await fs.readdirAsync(modInstPath);
-        const candidates = fileNames
-          .map((fileName) => activator?.getDeployedPath(fileName) ?? fileName)
-          .filter((fileName) => !overridden.has(fileName));
-        for (const fileName of await selectPluginFiles(modInstPath, candidates, gameId)) {
+        let fileNames: string[];
+        let candidates: string[];
+        if (nativeModScans !== undefined) {
+          const scanned = nativeModScans.get(modInstPath);
+          if (scanned === undefined || scanned.error !== undefined) {
+            throw new Error(scanned?.error ?? "plugin scan failed");
+          }
+          fileNames = scanned.files.map((file) => file.name);
+          candidates = fileNames
+            .map((fileName) => activator?.getDeployedPath(fileName) ?? fileName)
+            .filter((fileName) => !overridden.has(fileName));
+        } else {
+          fileNames = await fs.readdirAsync(modInstPath);
+          candidates = fileNames
+            .map((fileName) => activator?.getDeployedPath(fileName) ?? fileName)
+            .filter((fileName) => !overridden.has(fileName));
+        }
+        const selected =
+          nativeModScans !== undefined
+            ? candidates
+            : await selectPluginFiles(modInstPath, candidates, gameId);
+        for (const fileName of selected) {
           modIdByFileName[fileName] = mod.id;
           addPlugin(modInstPath, fileName, mod.id, false);
         }

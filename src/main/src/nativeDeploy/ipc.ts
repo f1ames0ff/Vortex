@@ -7,6 +7,9 @@ import type {
   NativeArchiveListRequest,
   NativeDepsRequest,
   NativeDeployRequest,
+  NativePluginOrderRequest,
+  NativePluginOrderWriteRequest,
+  NativePluginScanRequest,
   NativeHashFilesRequest,
   NativeInstallRequest,
   NativePurgeRequest,
@@ -101,6 +104,21 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle("nativeDeploy:collectionPlan", (_event, request: NativeDepsRequest) =>
     nativeCoreClient().collectionPlan(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:pluginsScan", (_event, request: NativePluginScanRequest) =>
+    nativeCoreClient().pluginsScan(request),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:pluginsOrderRead",
+    (_event, request: NativePluginOrderRequest) => nativeCoreClient().pluginsOrderRead(request),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:pluginsOrderWrite",
+    (_event, request: NativePluginOrderWriteRequest) =>
+      nativeCoreClient().pluginsOrderWrite(request),
   );
 }
 

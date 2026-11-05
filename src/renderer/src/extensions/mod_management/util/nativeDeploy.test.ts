@@ -40,8 +40,11 @@ import {
   inspectStagingNatively,
   planCollectionNatively,
   purgeWithNativeCore,
+  readPluginOrderNatively,
   resetNativeDeployStatus,
   resolveDependenciesNatively,
+  scanPluginsNatively,
+  writePluginOrderNatively,
 } from "./nativeDeploy";
 
 interface FakeNativeDeploy {
@@ -56,6 +59,9 @@ interface FakeNativeDeploy {
   hashFiles: ReturnType<typeof vi.fn>;
   depsResolve: ReturnType<typeof vi.fn>;
   collectionPlan: ReturnType<typeof vi.fn>;
+  pluginsScan: ReturnType<typeof vi.fn>;
+  pluginsOrderRead: ReturnType<typeof vi.fn>;
+  pluginsOrderWrite: ReturnType<typeof vi.fn>;
 }
 
 let nativeDeploy: FakeNativeDeploy;
@@ -90,6 +96,9 @@ beforeEach(() => {
     hashFiles: vi.fn(),
     depsResolve: vi.fn(),
     collectionPlan: vi.fn(),
+    pluginsScan: vi.fn(),
+    pluginsOrderRead: vi.fn(),
+    pluginsOrderWrite: vi.fn(),
   };
   installApi(nativeDeploy);
   resetNativeDeployStatus();
@@ -457,5 +466,55 @@ describe("native staging adapter", () => {
       downloads: [],
     });
     expect(result?.phases).toEqual([1, 666]);
+  });
+
+  it("scans plugin directories in the core", async () => {
+    nativeDeploy.pluginsScan.mockResolvedValue({
+      directories: [
+        {
+          path: "/game/Data",
+          files: [{ name: "Mod.esp", pluginId: "mod.esp", ghost: false }],
+        },
+      ],
+    });
+
+    const result = await scanPluginsNatively([
+      { path: "/game/Data", extensions: [".esm", ".esp", ".esl"] },
+    ]);
+
+    expect(nativeDeploy.pluginsScan).toHaveBeenCalledWith({
+      directories: [{ path: "/game/Data", extensions: [".esm", ".esp", ".esl"] }],
+    });
+    expect(result?.get("/game/Data")?.files[0].pluginId).toBe("mod.esp");
+  });
+
+  it("writes and reads plugin order files in the core", async () => {
+    nativeDeploy.pluginsOrderWrite.mockResolvedValue({
+      pluginsFile: "plugins.txt",
+      loadOrderFile: "loadorder.txt",
+      plugins: ["*Skyrim.esm"],
+      loadOrder: ["Skyrim.esm"],
+    });
+    nativeDeploy.pluginsOrderRead.mockResolvedValue({
+      pluginsFile: "plugins.txt",
+      loadOrderFile: "loadorder.txt",
+      plugins: ["*Skyrim.esm"],
+      loadOrder: ["Skyrim.esm"],
+    });
+
+    const written = await writePluginOrderNatively(
+      "/game/AppData",
+      ["*Skyrim.esm"],
+      ["Skyrim.esm"],
+    );
+    const read = await readPluginOrderNatively("/game/AppData");
+
+    expect(nativeDeploy.pluginsOrderWrite).toHaveBeenCalledWith({
+      directory: "/game/AppData",
+      plugins: ["*Skyrim.esm"],
+      loadOrder: ["Skyrim.esm"],
+    });
+    expect(written?.pluginsFile).toBe("plugins.txt");
+    expect(read?.loadOrder).toEqual(["Skyrim.esm"]);
   });
 });

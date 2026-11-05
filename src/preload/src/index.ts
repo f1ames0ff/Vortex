@@ -59,6 +59,11 @@ try {
       hashFiles: (request) => betterIpcRenderer.invoke("nativeDeploy:hashFiles", request),
       depsResolve: (request) => betterIpcRenderer.invoke("nativeDeploy:depsResolve", request),
       collectionPlan: (request) => betterIpcRenderer.invoke("nativeDeploy:collectionPlan", request),
+      pluginsScan: (request) => betterIpcRenderer.invoke("nativeDeploy:pluginsScan", request),
+      pluginsOrderRead: (request) =>
+        betterIpcRenderer.invoke("nativeDeploy:pluginsOrderRead", request),
+      pluginsOrderWrite: (request) =>
+        betterIpcRenderer.invoke("nativeDeploy:pluginsOrderWrite", request),
     },
 
     shell: {

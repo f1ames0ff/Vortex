@@ -85,6 +85,18 @@ export class VortexCoreClient {
     return this.request("collection.plan", request);
   }
 
+  pluginsScan(request) {
+    return this.request("plugins.scan", request);
+  }
+
+  pluginsOrderRead(request) {
+    return this.request("plugins.loadOrder.read", request);
+  }
+
+  pluginsOrderWrite(request) {
+    return this.request("plugins.loadOrder.write", request);
+  }
+
   request(method, params = {}) {
     const id = this.#nextId++;
     const request = { id, method, params };

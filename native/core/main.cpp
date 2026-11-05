@@ -8,6 +8,7 @@
 #include "vortex/core/deps.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
+#include "vortex/core/plugins.hpp"
 #include "vortex/core/status.hpp"
 #include "vortex/game/descriptor.hpp"
 
@@ -228,6 +229,47 @@ json stringsJson(const std::vector<std::string>& values) {
         result.push_back(value);
     }
     return result;
+}
+
+json pluginScanJson(const vortex::core::PluginScanResult& result) {
+    json directories = json::array();
+    for (const auto& directory : result.directories) {
+        json files = json::array();
+        for (const auto& file : directory.files) {
+            files.push_back({{"name", file.name},
+                             {"pluginId", file.pluginId},
+                             {"ghost", file.ghost}});
+        }
+        json value = {{"path", directory.path}, {"files", std::move(files)}};
+        if (!directory.error.empty()) {
+            value["error"] = directory.error;
+        }
+        directories.push_back(std::move(value));
+    }
+    return {{"directories", std::move(directories)}};
+}
+
+json pluginOrderJson(const vortex::core::PluginOrderResult& result) {
+    json plugins = json::array();
+    for (const auto& row : result.plugins) {
+        plugins.push_back(row);
+    }
+    json loadOrder = json::array();
+    for (const auto& row : result.loadOrder) {
+        loadOrder.push_back(row);
+    }
+    json value = {
+        {"pluginsFile", result.pluginsFile},
+        {"loadOrderFile", result.loadOrderFile},
+        {"pluginsHeader", result.pluginsHeader},
+        {"loadOrderHeader", result.loadOrderHeader},
+        {"plugins", std::move(plugins)},
+        {"loadOrder", std::move(loadOrder)},
+    };
+    if (!result.error.empty()) {
+        value["error"] = result.error;
+    }
+    return value;
 }
 
 vortex::core::InstallInstructionType parseInstructionType(const std::string& value) {
@@ -542,7 +584,8 @@ json dispatch(CoreState& state, const Request& request) {
             {"capabilities",
              {"ping", "scan", "staging.status", "install.apply", "game.registry",
               "archive.list", "archive.extract", "hash.files", "deps.matchMod",
-              "deps.matchDownload", "deps.resolve", "collection.plan", "plan", "deploy",
+              "deps.matchDownload", "deps.resolve", "collection.plan", "plugins.scan",
+              "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
               "deploy.symlink", "purge"}},
             {"pid", 0},
         };
@@ -559,6 +602,60 @@ json dispatch(CoreState& state, const Request& request) {
             result.push_back(gameJson(game));
         }
         return {{"games", std::move(result)}};
+    }
+
+    if (request.method == "plugins.scan") {
+        if (!params.contains("directories") || !params["directories"].is_array()) {
+            throw std::runtime_error("params.directories must be an array");
+        }
+        std::vector<vortex::core::PluginScanRequest> requests;
+        requests.reserve(params["directories"].size());
+        for (const auto& item : params["directories"]) {
+            if (!item.is_object()) {
+                throw std::runtime_error("each plugin scan directory must be an object");
+            }
+            vortex::core::PluginScanRequest scan;
+            scan.path = pathFromUtf8(item.value("path", std::string{}));
+            if (scan.path.empty()) {
+                throw std::runtime_error("plugin scan directory.path is required");
+            }
+            scan.extensions = stringArray(item, "extensions");
+            if (scan.extensions.empty()) {
+                scan.extensions = {".esm", ".esp"};
+            }
+            requests.push_back(std::move(scan));
+        }
+        return pluginScanJson(vortex::core::scanPlugins(requests));
+    }
+
+    if (request.method == "plugins.loadOrder.read" || request.method == "plugins.loadOrder.write") {
+        const auto directory = pathFromUtf8(params.value("directory", std::string{}));
+        if (directory.empty()) {
+            throw std::runtime_error("params.directory is required");
+        }
+        if (request.method == "plugins.loadOrder.read") {
+            return pluginOrderJson(vortex::core::readPluginOrder(directory));
+        }
+
+        if (!params.contains("plugins") || !params["plugins"].is_array() ||
+            !params.contains("loadOrder") || !params["loadOrder"].is_array()) {
+            throw std::runtime_error("params.plugins and params.loadOrder must be arrays");
+        }
+        std::vector<std::string> plugins;
+        for (const auto& row : params["plugins"]) {
+            if (!row.is_string()) {
+                throw std::runtime_error("plugin rows must be strings");
+            }
+            plugins.push_back(row.get<std::string>());
+        }
+        std::vector<std::string> loadOrder;
+        for (const auto& row : params["loadOrder"]) {
+            if (!row.is_string()) {
+                throw std::runtime_error("load order rows must be strings");
+            }
+            loadOrder.push_back(row.get<std::string>());
+        }
+        return pluginOrderJson(vortex::core::writePluginOrder(directory, plugins, loadOrder));
     }
 
     if (request.method == "deps.matchMod") {

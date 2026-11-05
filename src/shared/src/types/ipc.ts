@@ -40,6 +40,11 @@ import type {
   NativeHashFilesRequest,
   NativeHashFilesResult,
   NativeInstallRequest,
+  NativePluginOrderRequest,
+  NativePluginOrderResult,
+  NativePluginOrderWriteRequest,
+  NativePluginScanRequest,
+  NativePluginScanResult,
   NativeInstallResult,
   NativePurgeRequest,
   NativePurgeResult,
@@ -418,6 +423,13 @@ export interface InvokeChannels {
   "nativeDeploy:hashFiles": (request: NativeHashFilesRequest) => Promise<NativeHashFilesResult>;
   "nativeDeploy:depsResolve": (request: NativeDepsRequest) => Promise<NativeDepsResolveResult>;
   "nativeDeploy:collectionPlan": (request: NativeDepsRequest) => Promise<NativeCollectionPlan>;
+  "nativeDeploy:pluginsScan": (request: NativePluginScanRequest) => Promise<NativePluginScanResult>;
+  "nativeDeploy:pluginsOrderRead": (
+    request: NativePluginOrderRequest,
+  ) => Promise<NativePluginOrderResult>;
+  "nativeDeploy:pluginsOrderWrite": (
+    request: NativePluginOrderWriteRequest,
+  ) => Promise<NativePluginOrderResult>;
 
   // bsdiff binary patching, run on a main-process worker_thread (only paths cross IPC)
   "bsdiff:create": (oldPath: string, newPath: string, patchPath: string) => Promise<void>;

@@ -29,6 +29,11 @@ import type {
   NativeHashFilesResult,
   NativeInstallRequest,
   NativeInstallResult,
+  NativePluginOrderRequest,
+  NativePluginOrderResult,
+  NativePluginOrderWriteRequest,
+  NativePluginScanRequest,
+  NativePluginScanResult,
   NativePurgeRequest,
   NativePurgeResult,
   NativeStagingRequest,
@@ -194,6 +199,18 @@ export class NativeCoreClient {
 
   collectionPlan(request: NativeDepsRequest): Promise<NativeCollectionPlan> {
     return this.#request("collection.plan", request);
+  }
+
+  pluginsScan(request: NativePluginScanRequest): Promise<NativePluginScanResult> {
+    return this.#request("plugins.scan", request);
+  }
+
+  pluginsOrderRead(request: NativePluginOrderRequest): Promise<NativePluginOrderResult> {
+    return this.#request("plugins.loadOrder.read", request);
+  }
+
+  pluginsOrderWrite(request: NativePluginOrderWriteRequest): Promise<NativePluginOrderResult> {
+    return this.#request("plugins.loadOrder.write", request);
   }
 
   /** Stop the core process and reject anything still in flight. */

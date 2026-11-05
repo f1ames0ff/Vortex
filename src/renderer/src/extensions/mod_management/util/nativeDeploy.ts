@@ -21,6 +21,8 @@ import type {
   NativeLookupMod,
   NativeModReference,
   NativeModStatus,
+  NativePluginOrderResult,
+  NativePluginScanDirectory,
   NativeRuleInfo,
 } from "@vortex/shared/ipc";
 
@@ -236,6 +238,63 @@ export async function planCollectionNatively(
     return await window.api.nativeDeploy.collectionPlan(
       toNativeDepsRequest(rules, mods, downloads),
     );
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Scan plugin directories in the core, keyed by directory path. */
+export async function scanPluginsNatively(
+  directories: Array<{ path: string; extensions: string[] }>,
+): Promise<Map<string, NativePluginScanDirectory> | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "plugins.scan")) {
+    return undefined;
+  }
+  try {
+    const result = await window.api.nativeDeploy.pluginsScan({ directories });
+    return new Map(result.directories.map((directory) => [directory.path, directory]));
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Read the raw plugin order rows in the core. */
+export async function readPluginOrderNatively(
+  directory: string,
+): Promise<NativePluginOrderResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "plugins.loadOrder.read")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.pluginsOrderRead({ directory });
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Write plugins.txt/loadorder.txt in the core. */
+export async function writePluginOrderNatively(
+  directory: string,
+  plugins: string[],
+  loadOrder: string[],
+): Promise<NativePluginOrderResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "plugins.loadOrder.write")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.pluginsOrderWrite({ directory, plugins, loadOrder });
   } catch (err) {
     if (isUnknownMethod(err)) {
       return undefined;

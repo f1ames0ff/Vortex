@@ -42,6 +42,7 @@ add_library(vortex_core
     src/hash.cpp
     src/install.cpp
     src/path_safety.cpp
+    src/plugins.cpp
     src/process.cpp
     src/status.cpp
 )
