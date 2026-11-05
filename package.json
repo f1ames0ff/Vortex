@@ -25,6 +25,8 @@
     "preinstall": "node ./scripts/create-env-file.mjs",
     "dev": "pnpm nx run @vortex/main:dev",
     "start": "pnpm nx run @vortex/main:start",
+    "start:prod": "cross-env VORTEX_PROD_DATA=1 pnpm nx run @vortex/main:start",
+    "start:prod:native": "cross-env VORTEX_PROD_DATA=1 VORTEX_NATIVE_DEPLOY=1 pnpm nx run @vortex/main:start",
     "build": "pnpm nx run-many -t build lint typecheck && pnpm run assets",
     "assets": "node ./scripts/dependency-report.mjs",
     "package": "pnpm cross-env NODE_ENV=production pnpm run build && pnpm cross-env NODE_ENV=production pnpm nx run @vortex/main:package",
