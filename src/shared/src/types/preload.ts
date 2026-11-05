@@ -54,6 +54,8 @@ import type {
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeploySingleRequest,
+  NativeExternalChangesRequest,
+  NativeExternalChangesResult,
   NativeDeployStatus,
   NativeHashFilesRequest,
   NativeHashFilesResult,
@@ -641,6 +643,9 @@ export interface NativeDeployApi {
 
   /** Deploys or undeploys a single mod without touching other sources. */
   deploySingle(request: NativeDeploySingleRequest): Promise<NativeDeployResult>;
+
+  /** Compares a manifest with staging and target files. */
+  externalChanges(request: NativeExternalChangesRequest): Promise<NativeExternalChangesResult>;
 
   /** Removes a deployment and restores backups through `vortex-core`. */
   purge(request: NativePurgeRequest): Promise<NativePurgeResult>;

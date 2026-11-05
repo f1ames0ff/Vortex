@@ -20,6 +20,7 @@ import type {
   NativeDeployRequest,
   NativeDeploySingleRequest,
   NativeDeployStatus,
+  NativeExternalChangesRequest,
   NativeDeployedFile,
   NativeDownloadInfo,
   NativeDownloadRequest,
@@ -41,7 +42,7 @@ import * as fs from "../../../util/fs";
 import type { IDownload } from "../../download_management/types/IDownload";
 import { addDeploymentFailures } from "../actions/session";
 import { mergedSourceName } from "../modMerging";
-import type { IDeployedFile, IDeploymentMethod } from "../types/IDeploymentMethod";
+import type { IDeployedFile, IDeploymentMethod, IFileChange } from "../types/IDeploymentMethod";
 import type { IMod, IModReference, IModRule } from "../types/IMod";
 import { manifestPaths } from "./activationStore";
 
@@ -664,6 +665,69 @@ export async function deployWithNativeCore(
  * does not apply; otherwise mutates `lastDeployment` to the entries the core
  * could not remove and returns `true`.
  */
+/**
+ * Detect external changes by comparing the previous manifest with staging and
+ * target files in the core. Returns `undefined` when the core can't do this so
+ * the activator's TypeScript implementation can run.
+ */
+export async function detectExternalChangesNatively(
+  api: IExtensionApi,
+  gameId: string,
+  stagingPath: string,
+  destinationPath: string,
+  method: IDeploymentMethod,
+  files: IDeployedFile[],
+  typeId: string,
+): Promise<IFileChange[] | undefined> {
+  if (!NATIVE_DEPLOY_METHOD_IDS.has(method.id)) {
+    return undefined;
+  }
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available) {
+    return undefined;
+  }
+  if (!coreSupports(status, "deployment.externalChanges")) {
+    return undefined;
+  }
+
+  const manifest = manifestPaths(destinationPath, stagingPath, typeId).manifestPath;
+  const request: NativeExternalChangesRequest = {
+    staging: stagingPath,
+    target: destinationPath,
+    manifest,
+    method: method.id,
+    files: files.map((file) => ({
+      relPath: file.relPath,
+      source: file.source,
+      target: file.target,
+      time: file.time,
+      merged: file.merged,
+    })),
+  };
+
+  try {
+    const result = await window.api.nativeDeploy.externalChanges(request);
+    return result.changes.map((change) => ({
+      filePath: change.filePath,
+      source: change.source,
+      target: change.target,
+      changeType: change.changeType,
+      sourceTime: change.sourceTime !== undefined ? new Date(change.sourceTime) : undefined,
+      destTime: change.destTime !== undefined ? new Date(change.destTime) : undefined,
+    }));
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    log("warn", "native external-change scan failed, falling back", {
+      gameId,
+      typeId,
+      error: getErrorMessageOrDefault(err),
+    });
+    return undefined;
+  }
+}
+
 /**
  * Deploy or undeploy one mod through the core. The core merges the requested
  * mod into the existing manifest, so other sources keep their deployment and

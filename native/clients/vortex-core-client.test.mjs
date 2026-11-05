@@ -566,3 +566,43 @@ test("moves a mod into the game directory and restores it on purge", async () =>
   assert.equal(existsSync(join(moveStaging, "ModA", "a.txt.vortex_lnk")), false);
   assert.equal(readFileSync(join(moveTarget, "a.txt"), "utf8"), "game-a");
 });
+
+test("detects external changes from a manifest", async () => {
+  const changeStaging = join(root, "change-staging");
+  const changeTarget = join(root, "change-target");
+  mkdirSync(join(changeStaging, "ModA"), { recursive: true });
+  mkdirSync(changeTarget, { recursive: true });
+  writeFileSync(join(changeStaging, "ModA", "a.txt"), "mod-a");
+  const changeManifest = join(changeTarget, "vortex.deployment.json");
+
+  await client.request("deploy", {
+    staging: changeStaging,
+    target: changeTarget,
+    manifest: changeManifest,
+    mods: [{ installationPath: "ModA", sourceName: "ModA", target: "" }],
+    instance: "test",
+    method: "hardlink_activator",
+    game: "skyrimse",
+  });
+
+  const baseRequest = {
+    staging: changeStaging,
+    target: changeTarget,
+    manifest: changeManifest,
+    method: "hardlink_activator",
+  };
+  let result = await client.externalChanges(baseRequest);
+  assert.deepEqual(result.changes, []);
+
+  rmSync(join(changeTarget, "a.txt"));
+  writeFileSync(join(changeTarget, "a.txt"), "external");
+  result = await client.externalChanges(baseRequest);
+  assert.equal(result.changes.length, 1);
+  assert.equal(result.changes[0].changeType, "refchange");
+  assert.ok(result.changes[0].sourceTime > 0);
+  assert.ok(result.changes[0].destTime > 0);
+
+  rmSync(join(changeTarget, "a.txt"));
+  result = await client.externalChanges(baseRequest);
+  assert.equal(result.changes[0].changeType, "deleted");
+});

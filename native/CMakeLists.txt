@@ -21,6 +21,7 @@ endif()
 
 add_library(vortex_deployment
     src/executor.cpp
+    src/external_changes.cpp
     src/file_index.cpp
     src/journal.cpp
     src/manifest.cpp

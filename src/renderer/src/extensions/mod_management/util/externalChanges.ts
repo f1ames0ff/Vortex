@@ -32,6 +32,7 @@ import { MERGED_PATH } from "../modMerging";
 import { modsForGame } from "../selectors";
 import type { FileAction, IFileEntry } from "../types/IFileEntry";
 import { deployedFileKey, deployedFilePath } from "./deployedFilePath";
+import { detectExternalChangesNatively } from "./nativeDeploy";
 
 /**
  * look at the file actions and act accordingly. Depending on the action this can
@@ -289,12 +290,22 @@ async function checkForExternalChanges(
       modType: typeId,
       count: lastDeployment[typeId]?.length ?? 0,
     });
-    const fileChanges = await activator.externalChanges(
-      profile.gameId,
-      stagingPath,
-      modPaths[typeId],
-      lastDeployment[typeId],
-    );
+    const fileChanges =
+      (await detectExternalChangesNatively(
+        api,
+        profile.gameId,
+        stagingPath,
+        modPaths[typeId],
+        activator,
+        lastDeployment[typeId] ?? [],
+        typeId,
+      ).catch(() => undefined)) ??
+      (await activator.externalChanges(
+        profile.gameId,
+        stagingPath,
+        modPaths[typeId],
+        lastDeployment[typeId],
+      ));
     if (fileChanges.length > 0) {
       changes[typeId] = fileChanges;
     }

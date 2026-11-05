@@ -1,4 +1,5 @@
 #include "vortex/deployment/executor.hpp"
+#include "vortex/deployment/external_changes.hpp"
 #include "vortex/deployment/file_index.hpp"
 #include "vortex/deployment/journal.hpp"
 #include "vortex/deployment/manifest.hpp"
@@ -138,6 +139,33 @@ json fileJson(const DeployedFile& file) {
         entry["merged"] = file.merged;
     }
     return entry;
+}
+
+std::vector<DeployedFile> readDeployedFiles(const json& params) {
+    std::vector<DeployedFile> files;
+    if (!params.contains("files") || !params["files"].is_array()) {
+        return files;
+    }
+    for (const auto& value : params["files"]) {
+        if (!value.is_object()) {
+            throw std::runtime_error("each deployed file must be an object");
+        }
+        DeployedFile file;
+        file.relPath = value.value("relPath", std::string{});
+        file.source = value.value("source", std::string{});
+        if (value.contains("target") && value["target"].is_string()) {
+            file.target = value["target"].get<std::string>();
+        }
+        file.time = value.value("time", TimeMs{0});
+        if (value.contains("merged") && value["merged"].is_array()) {
+            file.merged = value["merged"].get<std::vector<std::string>>();
+        }
+        if (file.relPath.empty()) {
+            throw std::runtime_error("deployed file.relPath is required");
+        }
+        files.push_back(std::move(file));
+    }
+    return files;
 }
 
 json filesJson(const std::vector<DeployedFile>& files) {
@@ -724,7 +752,8 @@ json dispatch(CoreState& state, const Request& request) {
               "collection.status", "collection.next", "collection.member", "collection.pause",
               "collection.cancel", "download.queue", "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
-              "deploy.symlink", "deploy.move", "deploy.single", "purge"}},
+              "deploy.symlink", "deploy.move", "deploy.single",
+              "deployment.externalChanges", "purge"}},
             {"pid", 0},
         };
     }
@@ -1097,15 +1126,46 @@ json dispatch(CoreState& state, const Request& request) {
     }
 
     if (request.method != "plan" && request.method != "deploy" &&
-        request.method != "deploy.single" && request.method != "purge") {
+        request.method != "deploy.single" && request.method != "deployment.externalChanges" &&
+        request.method != "purge") {
         throw std::runtime_error("unknown method: " + request.method);
     }
 
     const auto stagingPath = pathFromUtf8(params.value("staging", std::string{}));
     const auto targetPath = pathFromUtf8(params.value("target", std::string{}));
     const auto manifestPath = pathFromUtf8(params.value("manifest", std::string{}));
-    if (stagingPath.empty() || targetPath.empty() || manifestPath.empty()) {
+    if (stagingPath.empty() || targetPath.empty() ||
+        (manifestPath.empty() && request.method != "deployment.externalChanges")) {
         throw std::runtime_error("params.staging, params.target and params.manifest are required");
+    }
+
+    if (request.method == "deployment.externalChanges") {
+        auto files = readDeployedFiles(params);
+        if (files.empty() && !manifestPath.empty()) {
+            files = loadManifest(manifestPath).files;
+        }
+        const auto changes = vortex::deployment::detectExternalChanges(
+            stagingPath, targetPath, params.value("method", std::string("hardlink")), files,
+            params.value("caseInsensitive", platform::is_case_insensitive(targetPath)));
+        json result = json::array();
+        for (const auto& change : changes) {
+            json value = {
+                {"filePath", change.filePath},
+                {"source", change.source},
+                {"changeType", change.changeType},
+            };
+            if (change.target.has_value()) {
+                value["target"] = *change.target;
+            }
+            if (change.sourceTime.has_value()) {
+                value["sourceTime"] = *change.sourceTime;
+            }
+            if (change.destTime.has_value()) {
+                value["destTime"] = *change.destTime;
+            }
+            result.push_back(std::move(value));
+        }
+        return {{"changes", std::move(result)}};
     }
 
     if (request.method == "purge") {

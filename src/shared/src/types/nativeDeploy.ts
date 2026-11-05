@@ -493,3 +493,31 @@ export interface NativeDownloadStatus {
 export interface NativeDownloadListResult {
   downloads: NativeDownloadStatus[];
 }
+
+export interface NativeExternalChange {
+  filePath: string;
+  source: string;
+  target?: string;
+  changeType: "refchange" | "valchange" | "deleted" | "srcdeleted";
+  sourceTime?: number;
+  destTime?: number;
+}
+
+export interface NativeExternalChangesRequest {
+  staging: string;
+  target: string;
+  manifest: string;
+  method: string;
+  files?: Array<{
+    relPath: string;
+    source: string;
+    target?: string;
+    time?: number;
+    merged?: string[];
+  }>;
+  caseInsensitive?: boolean;
+}
+
+export interface NativeExternalChangesResult {
+  changes: NativeExternalChange[];
+}

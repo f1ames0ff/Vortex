@@ -10,6 +10,7 @@ import type {
   NativeDepsRequest,
   NativeDeployRequest,
   NativeDeploySingleRequest,
+  NativeExternalChangesRequest,
   NativeDownloadRequest,
   NativePluginOrderRequest,
   NativePluginOrderWriteRequest,

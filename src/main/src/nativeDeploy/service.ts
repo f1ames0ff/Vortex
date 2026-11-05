@@ -33,6 +33,8 @@ import type {
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeploySingleRequest,
+  NativeExternalChangesRequest,
+  NativeExternalChangesResult,
   NativeDeployStatus,
   NativeHashFilesRequest,
   NativeHashFilesResult,
@@ -180,6 +182,10 @@ export class NativeCoreClient {
 
   deploySingle(request: NativeDeploySingleRequest): Promise<NativeDeployResult> {
     return this.#request("deploy.single", { ...request, includeFiles: true });
+  }
+
+  externalChanges(request: NativeExternalChangesRequest): Promise<NativeExternalChangesResult> {
+    return this.#request("deployment.externalChanges", request);
   }
 
   purge(request: NativePurgeRequest): Promise<NativePurgeResult> {

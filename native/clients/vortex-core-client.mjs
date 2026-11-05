@@ -65,6 +65,14 @@ export class VortexCoreClient {
     return this.request("archive.extract", request);
   }
 
+  deploySingle(request) {
+    return this.request("deploy.single", request);
+  }
+
+  externalChanges(request) {
+    return this.request("deployment.externalChanges", request);
+  }
+
   hashFiles(request) {
     return this.request("hash.files", request);
   }

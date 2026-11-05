@@ -47,6 +47,7 @@ Supported requests:
 {"id":3,"method":"plan","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","mods":[{"installationPath":"ModA"}]}}
 {"id":4,"method":"deploy","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","mods":[{"installationPath":"ModA"}],"instance":"...","method":"hardlink","game":"skyrimse"}}
 {"id":4,"method":"deploy.single","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","instance":"...","method":"move_activator","game":"skyrimse","enable":true,"mod":{"installationPath":"ModA","target":"Data"}}}
+{"id":4,"method":"deployment.externalChanges","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json","method":"hardlink_activator","files":[...]}}
 {"id":5,"method":"purge","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json"}}
 {"id":6,"method":"staging.status","params":{"staging":"/staging","mods":[{"id":"mod-a","installationPath":"ModA"},{"id":"mod-b","installationPath":"ModB"}]}}
 {"id":7,"method":"install.apply","params":{"temp":"/tmp/ModA.extracted","destination":"/staging/ModA","instructions":[{"type":"hardlink","source":"textures/a.dds","destination":"textures/a.dds"},{"type":"write","destination":"meta.ini","data":"..."}]}}
@@ -109,6 +110,15 @@ rebuilds the desired deployment from those placeholders, so a move deployment
 can be re-planned without rescanning the now-empty staging files. Purge moves
 each target back to staging, removes the placeholder and restores the backup;
 cross-device moves fall back to copy + delete.
+
+`deployment.externalChanges` compares every manifest entry with staging and
+the target directory. It reports `srcdeleted` when staging lost a file the
+deployment can restore from the target, `deleted` when the target file
+disappeared, and `refchange` when both exist but the target no longer links
+to (or points at) the staged source. Move placeholders are resolved to their
+target, and the result is deduplicated with deleted entries taking priority.
+The renderer's external-change scan calls this first and keeps the activator's
+TypeScript implementation as fallback.
 
 `deploy.single` merges one mod into the existing manifest and applies only that
 mod's added/changed/removed entries, leaving every other source untouched. It
@@ -264,6 +274,8 @@ Known integration gaps for the next slice:
 - Single-mod activation and move deployment use the core when its
   `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
   back to the TypeScript activator.
+- External-change detection is in the core for hardlink/symlink/move; the
+  other deployment methods still use their TypeScript activator.
 - Downloads use the external `curl` binary. Linux distributions ship it;
   Windows 10+ includes `curl.exe`. Set `VORTEX_CURL_PATH` to override the
   binary. Curl honours the standard `http_proxy`/`https_proxy` environment

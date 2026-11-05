@@ -1,4 +1,5 @@
 #include "vortex/deployment/executor.hpp"
+#include "vortex/deployment/external_changes.hpp"
 #include "vortex/deployment/file_index.hpp"
 #include "vortex/deployment/journal.hpp"
 #include "vortex/deployment/manifest.hpp"
@@ -321,6 +322,114 @@ void testMoveDeployAndPurge() {
     check(!fs::exists(target / "nested" / "b.txt"), "move purge removes deployed files");
 
     fs::remove_all(root);
+}
+
+void testExternalChanges() {
+    const auto root = makeRoot("external-changes");
+    const auto staging = root / "staging";
+    const auto target = root / "target";
+    const auto manifestPath = root / "manifest.json";
+    const auto mod = staging / "ModA";
+    writeFile(mod / "a.txt", "mod-a");
+
+    const std::vector<ModSpec> mods = {{"ModA", "ModA", "", {}}};
+    const PlanOptions options;
+    IndexStore index(staging);
+    auto plan = planDeployment(staging, target, mods, Manifest{}, options, index);
+
+    Journal journal(root / "journal.jsonl", platform::operation_id());
+    ExecutorContext context;
+    context.stagingPath = staging;
+    context.targetPath = target;
+    context.manifestPath = manifestPath;
+    context.instance = "test";
+    context.deploymentMethod = "hardlink";
+    check(applyDeployment(plan, context, journal).failures.empty(), "external deploy");
+    auto files = loadManifest(manifestPath).files;
+
+    auto changes = vortex::deployment::detectExternalChanges(staging, target, "hardlink", files,
+                                                             false);
+    check(changes.empty(), "intact hardlink has no external change");
+
+    fs::remove(target / "a.txt");
+    writeFile(target / "a.txt", "external");
+    changes =
+        vortex::deployment::detectExternalChanges(staging, target, "hardlink", files, false);
+    check(changes.size() == 1, "replaced hardlink is a change");
+    check(changes[0].changeType == "refchange", "replaced hardlink is a refchange");
+    check(changes[0].sourceTime.has_value() && changes[0].destTime.has_value(),
+          "refchange carries both times");
+
+    fs::remove(target / "a.txt");
+    changes =
+        vortex::deployment::detectExternalChanges(staging, target, "hardlink", files, false);
+    check(changes.size() == 1 && changes[0].changeType == "deleted",
+          "missing target is a deleted change");
+
+    writeFile(target / "a.txt", "mod-a");
+    fs::remove(mod / "a.txt");
+    changes =
+        vortex::deployment::detectExternalChanges(staging, target, "hardlink", files, false);
+    check(changes.size() == 1 && changes[0].changeType == "srcdeleted",
+          "missing hardlink source is a srcdeleted change");
+
+    // Symlinks can't restore a deleted source.
+    const auto symlinkRoot = makeRoot("external-symlink");
+    const auto symlinkStaging = symlinkRoot / "staging";
+    const auto symlinkTarget = symlinkRoot / "target";
+    const auto symlinkManifest = symlinkRoot / "manifest.json";
+    writeFile(symlinkStaging / "ModA" / "a.txt", "mod-a");
+    IndexStore symlinkIndex(symlinkStaging);
+    auto symlinkPlan =
+        planDeployment(symlinkStaging, symlinkTarget, mods, Manifest{}, options, symlinkIndex);
+    ExecutorContext symlinkContext;
+    symlinkContext.stagingPath = symlinkStaging;
+    symlinkContext.targetPath = symlinkTarget;
+    symlinkContext.manifestPath = symlinkManifest;
+    symlinkContext.instance = "test";
+    symlinkContext.deploymentMethod = "symlink";
+    Journal symlinkJournal(symlinkRoot / "journal.jsonl", platform::operation_id());
+    check(applyDeployment(symlinkPlan, symlinkContext, symlinkJournal).failures.empty(),
+          "symlink external deploy");
+    const auto symlinkFiles = loadManifest(symlinkManifest).files;
+    fs::remove(symlinkStaging / "ModA" / "a.txt");
+    const auto symlinkChanges = vortex::deployment::detectExternalChanges(
+        symlinkStaging, symlinkTarget, "symlink", symlinkFiles, false);
+    check(symlinkChanges.empty(), "symlink source deletion is not restorable");
+
+    // Move deployment: the placeholder keeps an intact file quiet, while a
+    // missing target is reported as deleted.
+    const auto moveRoot = makeRoot("external-move");
+    const auto moveStaging = moveRoot / "staging";
+    const auto moveTarget = moveRoot / "target";
+    const auto moveManifest = moveRoot / "manifest.json";
+    writeFile(moveStaging / "ModA" / "a.txt", "mod-a");
+    PlanOptions moveOptions;
+    moveOptions.deploymentMethod = "move";
+    IndexStore moveIndex(moveStaging);
+    auto movePlan =
+        planDeployment(moveStaging, moveTarget, mods, Manifest{}, moveOptions, moveIndex);
+    ExecutorContext moveContext;
+    moveContext.stagingPath = moveStaging;
+    moveContext.targetPath = moveTarget;
+    moveContext.manifestPath = moveManifest;
+    moveContext.instance = "test";
+    moveContext.deploymentMethod = "move";
+    Journal moveJournal(moveRoot / "journal.jsonl", platform::operation_id());
+    check(applyDeployment(movePlan, moveContext, moveJournal).failures.empty(),
+          "move external deploy");
+    auto moveFiles = loadManifest(moveManifest).files;
+    changes = vortex::deployment::detectExternalChanges(moveStaging, moveTarget, "move", moveFiles,
+                                                        false);
+    check(changes.empty(), "intact move deployment has no external change");
+    fs::remove(moveTarget / "a.txt");
+    changes = vortex::deployment::detectExternalChanges(moveStaging, moveTarget, "move", moveFiles,
+                                                        false);
+    check(changes.empty(), "missing move target matches the placeholder state");
+
+    fs::remove_all(root);
+    fs::remove_all(symlinkRoot);
+    fs::remove_all(moveRoot);
 }
 
 void testSingleModActivation() {
@@ -1220,6 +1329,7 @@ int main() {
         testSymlinkDeployAndPurge();
         testMoveDeployAndPurge();
         testSingleModActivation();
+        testExternalChanges();
         testPurgeKeepsFailedEntries();
         testStaleBackupReportsActionableFailure();
         testFileErrorsBecomeFailures();

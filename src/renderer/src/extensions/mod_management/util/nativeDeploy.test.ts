@@ -38,6 +38,7 @@ import {
   collectionStatusNatively,
   deploySingleModNatively,
   deployWithNativeCore,
+  detectExternalChangesNatively,
   downloadFileNatively,
   extractArchiveNatively,
   hashFilesNatively,
@@ -60,6 +61,7 @@ interface FakeNativeDeploy {
   plan: ReturnType<typeof vi.fn>;
   deploy: ReturnType<typeof vi.fn>;
   deploySingle: ReturnType<typeof vi.fn>;
+  externalChanges: ReturnType<typeof vi.fn>;
   purge: ReturnType<typeof vi.fn>;
   stagingStatus: ReturnType<typeof vi.fn>;
   installApply: ReturnType<typeof vi.fn>;
@@ -110,6 +112,7 @@ beforeEach(() => {
     plan: vi.fn(),
     deploy: vi.fn(),
     deploySingle: vi.fn(),
+    externalChanges: vi.fn(),
     purge: vi.fn(),
     stagingStatus: vi.fn(),
     installApply: vi.fn(),
@@ -175,6 +178,81 @@ describe("native deployment adapter", () => {
   it("keeps symlink deployment on the TS path without the capability", async () => {
     nativeDeploy.status.mockResolvedValue({ enabled: true, available: true, capabilities: [] });
     expect(await canDeployNatively({ id: "symlink_activator" } as never)).toBe(false);
+  });
+
+  it("detects external changes in the core", async () => {
+    const { api } = makeApi();
+    nativeDeploy.status.mockResolvedValue({
+      enabled: true,
+      available: true,
+      capabilities: ["deployment.externalChanges"],
+    });
+    nativeDeploy.externalChanges.mockResolvedValue({
+      changes: [
+        {
+          filePath: "textures/a.dds",
+          source: "ModA",
+          target: "Data",
+          changeType: "refchange",
+          sourceTime: 1000,
+          destTime: 2000,
+        },
+      ],
+    });
+
+    const result = await detectExternalChangesNatively(
+      api as never,
+      "skyrimse",
+      "/staging",
+      "/game/Data",
+      { id: "hardlink_activator" } as never,
+      [{ relPath: "textures/a.dds", source: "ModA", target: "Data", time: 123 }],
+      "textures",
+    );
+
+    expect(nativeDeploy.externalChanges).toHaveBeenCalledWith({
+      staging: "/staging",
+      target: "/game/Data",
+      manifest: path.join("/game/Data", "vortex.deployment.textures.json"),
+      method: "hardlink_activator",
+      files: [
+        { relPath: "textures/a.dds", source: "ModA", target: "Data", time: 123, merged: undefined },
+      ],
+    });
+    expect(result).toEqual([
+      {
+        filePath: "textures/a.dds",
+        source: "ModA",
+        target: "Data",
+        changeType: "refchange",
+        sourceTime: new Date(1000),
+        destTime: new Date(2000),
+      },
+    ]);
+  });
+
+  it("falls back when a core predates external-change detection", async () => {
+    const { api } = makeApi();
+    nativeDeploy.status.mockResolvedValue({
+      enabled: true,
+      available: true,
+      capabilities: ["deployment.externalChanges"],
+    });
+    nativeDeploy.externalChanges.mockRejectedValue(
+      new Error("internal: unknown method: deployment.externalChanges"),
+    );
+
+    await expect(
+      detectExternalChangesNatively(
+        api as never,
+        "skyrimse",
+        "/staging",
+        "/game/Data",
+        { id: "hardlink_activator" } as never,
+        [],
+        "textures",
+      ),
+    ).resolves.toBeUndefined();
   });
 
   it("deploys a single mod with the later-source blacklist", async () => {
