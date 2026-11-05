@@ -277,7 +277,7 @@ given.
 
 ```text
 include/vortex/deployment/   deployment types, planner, executor, manifest
-include/vortex/core/         staging status and install instruction APIs
+include/vortex/core/         staging, install, archive, hash, deps and plugin APIs
 include/vortex/game/         game.toml reader and game descriptor registry
 src/                         implementation
 cli/                         standalone test CLI
@@ -289,11 +289,10 @@ third_party/nlohmann/        vendored JSON header
 
 ## Next steps
 
-1. Add the Windows-specific hardlink and long-path backend and run the suite in
-   a Windows CI runner.
+1. Add the Windows-specific hardlink/symlink, long-path and plugin-file
+   backends and run the suite in a Windows CI runner.
 2. Route single-mod activation and move deployment through the core.
-3. Move archive extraction into the core (spawning the existing 7-Zip binary)
-   so `InstallManager` no longer orchestrates extraction in the renderer.
-4. Move dependency resolution and collection phase scheduling into the core,
-   leaving the renderer with UI state only.
+3. Move collection phase execution, retries and the stall watchdog into the
+   core, leaving `InstallDriver` as a view model.
+4. Move downloads and the download queue into the core.
 5. Add the first-party module/plugin host on top of the game descriptors.
