@@ -47,6 +47,13 @@ try {
       ping: () => betterIpcRenderer.invoke("example:ping"),
     },
 
+    nativeDeploy: {
+      status: () => betterIpcRenderer.invoke("nativeDeploy:status"),
+      plan: (request) => betterIpcRenderer.invoke("nativeDeploy:plan", request),
+      deploy: (request) => betterIpcRenderer.invoke("nativeDeploy:deploy", request),
+      purge: (request) => betterIpcRenderer.invoke("nativeDeploy:purge", request),
+    },
+
     shell: {
       openUrl: (url) => betterIpcRenderer.send("shell:openUrl", url),
       openFile: (filePath) => betterIpcRenderer.send("shell:openFile", filePath),

@@ -33,6 +33,7 @@ test("a deploy records every file it could not place, and the mod it came from",
       source: "SomeMod",
       relPath: "BugFixesSSE.log",
       outputPath: path.join(h.gameDir, "BugFixesSSE.log"),
+      message: expect.any(String),
     },
   ]);
 });

@@ -823,10 +823,11 @@ describe("ModsTableSwitch", () => {
         expect(pressedViews()).toEqual(["true", "false", "false"]);
       });
 
-      it("groups the Status view uninstalled, installing, enabled, then disabled", async () => {
+      it("groups the Status view uninstalled, installing, error, enabled, then disabled", async () => {
         renderSwitch({
           ...CATEGORISED,
           i: mod("i", "Iota", false, { state: "installing" }),
+          e: mod("e", "Epsilon", true, { status: "error" }),
           u: mod("u", "Upsilon", false, {
             state: "downloaded",
             attributes: { name: "Upsilon", wasInstalled: true },
@@ -841,6 +842,8 @@ describe("ModsTableSwitch", () => {
           "Upsilon",
           "Installing1",
           "Iota",
+          "Error1",
+          "Epsilon",
           "Enabled1",
           "Alpha",
           "Disabled1",

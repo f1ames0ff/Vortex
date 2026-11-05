@@ -16,6 +16,7 @@ vi.mock("./gameSupport", () => ({
   gameSupported: (gameId: string) => gameId === "skyrimse",
   gameDataPath: () => paths.dataDir,
   pluginPath: () => paths.pluginDir,
+  legacyAppDataPath: () => paths.pluginDir,
   pluginFormat: () => paths.format,
   nativePlugins: () => paths.native,
 }));

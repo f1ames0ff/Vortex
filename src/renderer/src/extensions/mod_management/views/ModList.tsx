@@ -47,6 +47,7 @@ import { withBatchContext } from "../../../util/BatchContext";
 import calculateFolderSize from "../../../util/calculateFolderSize";
 import { ProcessCanceled, UserCanceled } from "../../../util/CustomErrors";
 import Debouncer from "../../../util/Debouncer";
+import * as fs from "../../../util/fs";
 import * as selectors from "../../../util/selectors";
 import { getSafe } from "../../../util/storeHelper";
 import {
@@ -64,8 +65,8 @@ import MainPage from "../../../views/MainPage";
 import getDownloadGames from "../../download_management/util/getDownloadGames";
 import { getGame } from "../../gamemode_management/util/getGame";
 import { setModEnabled, setModsEnabled } from "../../profile_management/actions/profiles";
-import type { IProfileMod } from "../../profile_management/types/IProfile";
 import { removeMod, setModAttribute } from "../actions/mods";
+import type { IDeploymentFailure } from "../actions/session";
 import { setShowModDropzone } from "../actions/settings";
 import { ModsDropTarget } from "../components/mods_drop_target/ModsDropTarget";
 import { ModsTableSwitch } from "../components/mods_table_switch/ModsTableSwitch";
@@ -74,12 +75,13 @@ import { DOWNLOAD_TIME, ENABLED_TIME, INSTALL_TIME } from "../modAttributes";
 import getText from "../texts";
 import type { IInstallOptions } from "../types/IInstallOptions";
 import type { IMod } from "../types/IMod";
-import type { IModProps } from "../types/IModProps";
+import type { IModProps, IModWithState, ModInstallationState } from "../types/IModProps";
 import type { IModSource } from "../types/IModSource";
 import combineMods from "../util/combine";
 import filterModInfo from "../util/filterModInfo";
 import groupMods from "../util/modGrouping";
 import modName from "../util/modName";
+import { modStagingFolder, modStatus } from "../util/modStatus";
 import type { UpdateState } from "../util/modUpdateState";
 import modUpdateState, { isIdValid } from "../util/modUpdateState";
 import updateState from "../util/modUpdateState";
@@ -91,8 +93,6 @@ import Description from "./Description";
 import InstallArchiveButton from "./InstallArchiveButton";
 import VersionChangelogButton from "./VersionChangelogButton";
 import VersionIconButton from "./VersionIconButton";
-
-type IModWithState = IMod & IProfileMod;
 
 interface IVersionOptionProps {
   t: TFunction;
@@ -151,6 +151,7 @@ interface IConnectedProps extends IModProps {
   language: string;
   installPath: string;
   downloadPath: string;
+  deploymentFailures: IDeploymentFailure[];
   showDropzone: boolean;
   autoInstall: boolean;
   useModernLayout: boolean;
@@ -862,21 +863,32 @@ class ModList extends ComponentEx<IProps, IComponentState> {
       description: "Is mod enabled in current profile",
       icon: "check-o",
       calc: (mod: IModWithState) => {
-        if (mod.state === "downloaded") {
-          return getSafe(mod.attributes, ["wasInstalled"], false)
-            ? "Uninstalled"
-            : "Never Installed";
-        } else if (mod.state === "installing") {
-          return "Installing";
+        const status = mod.status ?? modStatus(mod, this.props.deploymentFailures);
+        switch (status) {
+          case "error":
+            return "Error";
+          case "uninstalled":
+            return "Uninstalled";
+          case "neverinstalled":
+            return "Never Installed";
+          case "installing":
+            return "Installing";
+          case "enabled":
+            return "Enabled";
+          default:
+            return "Disabled";
         }
-        return mod.enabled === true ? "Enabled" : "Disabled";
       },
       position: 5,
       placement: "table",
       isToggleable: false,
       edit: {
         inline: true,
-        choices: () => [
+        choices: (mod: IModWithState) => [
+          { key: "error", text: "Error", icon: "dialog-error", visible: false },
+          ...(mod.status === "error"
+            ? [{ key: "reinstall", text: "Reinstall", icon: "start-install" }]
+            : []),
           { key: "enabled", text: "Enabled", icon: "toggle-enabled" },
           { key: "disabled", text: "Disabled", icon: "toggle-disabled" },
           {
@@ -904,11 +916,14 @@ class ModList extends ComponentEx<IProps, IComponentState> {
       isGroupable: true,
       filter: new OptionsFilter(
         [
-          { value: true, label: this.props.t("Enabled") },
-          { value: false, label: this.props.t("Disabled") },
-          { value: null, label: this.props.t("Uninstalled") },
+          { value: "Error", label: this.props.t("Error") },
+          { value: "Enabled", label: this.props.t("Enabled") },
+          { value: "Disabled", label: this.props.t("Disabled") },
+          { value: "Uninstalled", label: this.props.t("Uninstalled") },
+          { value: "Never Installed", label: this.props.t("Never Installed") },
         ],
         true,
+        false,
       ),
     };
 
@@ -1098,6 +1113,26 @@ class ModList extends ComponentEx<IProps, IComponentState> {
       });
   };
 
+  /**
+   * Checks that an installed mod still has files in its staging folder. A missing or
+   * empty folder is how a mod can be enabled but contribute nothing to a deployment.
+   */
+  private installationStateFor(
+    stagingPath: string | undefined,
+    mod: IMod,
+  ): Promise<ModInstallationState> {
+    const modPath = modStagingFolder(mod, stagingPath);
+    if (modPath === undefined) {
+      return Promise.resolve("ok");
+    }
+
+    return Promise.resolve(fs.readdirAsync(modPath))
+      .then((entries) => (entries.length === 0 ? "empty" : "ok"))
+      .catch((err: unknown) => {
+        return (err as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "ok";
+      });
+  }
+
   private updateModsWithState(newProps: IProps): Promise<void> {
     const { gameMode } = newProps;
     let changed = false;
@@ -1125,76 +1160,101 @@ class ModList extends ComponentEx<IProps, IComponentState> {
       }
     });
 
-    // insert downloads. Since this requires deriving mod attributes from
-    // the source-specific data we need to do this asynchronously although
-    // we expect all attributes to be available instantaneous.
+    // A mod can be enabled in the profile while its staging folder was deleted or
+    // emptied behind Vortex's back. Check before the table claims it can be deployed.
+    const installedMods = Object.values(newModsWithState).filter(
+      (mod) => mod.state === "installed",
+    );
     return Promise.all(
-      Object.keys(newProps.downloads).map((archiveId) => {
-        if (
-          getDownloadGames(newProps.downloads[archiveId]).indexOf(gameMode) !== -1 &&
-          newProps.downloads[archiveId].state === "finished" &&
-          !installedIds.has(archiveId)
-        ) {
-          if (
-            oldProps.downloads[archiveId] === newProps.downloads[archiveId] &&
-            this.state.modsWithState[archiveId] !== undefined
-          ) {
-            newModsWithState[archiveId] = this.state.modsWithState[archiveId];
-            return;
-          }
-          return filterModInfo(
-            {
-              download: newProps.downloads[archiveId],
-              meta: newProps.downloads[archiveId]?.modInfo?.meta,
-            },
-            undefined,
-          ).then((info) => ({ archiveId, info }));
-        } else {
-          return Promise.resolve(undefined);
+      installedMods.map(async (mod) => {
+        const installationState = await this.installationStateFor(newProps.installPath, mod);
+        if (mod.installationState !== installationState) {
+          newModsWithState[mod.id] = { ...mod, installationState };
+          changed = true;
         }
       }),
-    ).then((modAttributes: Array<{ archiveId: string; info: any }>) => {
-      modAttributes
-        .filter((attribute) => attribute !== undefined)
-        .forEach((mod) => {
-          const download = newProps.downloads[mod.archiveId];
-          // complete attributes that we don't otherwise find for downloads
-          newModsWithState[mod.archiveId] = {
-            id: mod.archiveId,
-            state: "downloaded",
-            archiveId: mod.archiveId,
-            type: "",
-            installationPath: undefined,
-            enabled: null,
-            enabledTime: 0,
-            attributes: {
-              ...mod.info,
-              installTime: download.fileTime,
-              wasInstalled: download.installed !== undefined,
-            },
-          };
-          changed = true;
+    )
+      .then(() =>
+        // insert downloads. Since this requires deriving mod attributes from
+        // the source-specific data we need to do this asynchronously although
+        // we expect all attributes to be available instantaneous.
+        Promise.all(
+          Object.keys(newProps.downloads).map((archiveId) => {
+            if (
+              getDownloadGames(newProps.downloads[archiveId]).indexOf(gameMode) !== -1 &&
+              newProps.downloads[archiveId].state === "finished" &&
+              !installedIds.has(archiveId)
+            ) {
+              if (
+                oldProps.downloads[archiveId] === newProps.downloads[archiveId] &&
+                this.state.modsWithState[archiveId] !== undefined
+              ) {
+                newModsWithState[archiveId] = this.state.modsWithState[archiveId];
+                return;
+              }
+              return filterModInfo(
+                {
+                  download: newProps.downloads[archiveId],
+                  meta: newProps.downloads[archiveId]?.modInfo?.meta,
+                },
+                undefined,
+              ).then((info) => ({ archiveId, info }));
+            } else {
+              return Promise.resolve(undefined);
+            }
+          }),
+        ),
+      )
+      .then((modAttributes: Array<{ archiveId: string; info: any }>) => {
+        modAttributes
+          .filter((attribute) => attribute !== undefined)
+          .forEach((mod) => {
+            const download = newProps.downloads[mod.archiveId];
+            // complete attributes that we don't otherwise find for downloads
+            newModsWithState[mod.archiveId] = {
+              id: mod.archiveId,
+              state: "downloaded",
+              archiveId: mod.archiveId,
+              type: "",
+              installationPath: undefined,
+              enabled: null,
+              enabledTime: 0,
+              attributes: {
+                ...mod.info,
+                installTime: download.fileTime,
+                wasInstalled: download.installed !== undefined,
+              },
+            };
+            changed = true;
+          });
+
+        Object.values(newModsWithState).forEach((mod) => {
+          const status = modStatus(mod, newProps.deploymentFailures);
+          if (mod.status !== status) {
+            newModsWithState[mod.id] = { ...mod, status };
+            changed = true;
+          }
         });
 
-      // if the new mod list is a subset of the old one (including the empty set)
-      // the above check wouldn't notice that change
-      if (
-        !changed &&
-        (this.state.modsWithState === undefined ||
-          !_.isEqual(Object.keys(newModsWithState), Object.keys(this.state.modsWithState)))
-      ) {
-        changed = true;
-      }
+        // if the new mod list is a subset of the old one (including the empty set)
+        // the above check wouldn't notice that change
+        if (
+          !changed &&
+          (this.state.modsWithState === undefined ||
+            !_.isEqual(Object.keys(newModsWithState), Object.keys(this.state.modsWithState)))
+        ) {
+          changed = true;
+        }
 
-      if (changed || this.state.groupedMods === undefined) {
-        this.updateModGrouping(newModsWithState);
-      }
+        if (changed || this.state.groupedMods === undefined) {
+          this.updateModGrouping(newModsWithState);
+        }
 
-      // assign only after mod grouping is updated so these don't go out of sync
-      this.nextState.modsWithState = newModsWithState;
-      this.mLastUpdateProps = newProps;
-      return null;
-    });
+        // assign only after mod grouping is updated so these don't go out of sync
+        this.nextState.modsWithState = newModsWithState;
+        this.mLastUpdateProps = newProps;
+        return null;
+      });
   }
 
   private cycleModState(modId: string) {
@@ -1280,7 +1340,9 @@ class ModList extends ComponentEx<IProps, IComponentState> {
       return;
     }
 
-    if (value === undefined) {
+    if (value === "reinstall") {
+      this.reinstallErrorMod(mod.id);
+    } else if (value === undefined) {
       this.cycleModState(mod.id);
     } else {
       this.setModState(profileId, mod.id, value, (modId: string, enabled: boolean) =>
@@ -1400,8 +1462,52 @@ class ModList extends ComponentEx<IProps, IComponentState> {
       });
   };
 
-  private setModsEnabled(modIds: string[], enabled: boolean) {
-    const { profileId } = this.props;
+  private async setModsEnabled(modIds: string[], enabled: boolean) {
+    const { installPath, profileId } = this.props;
+
+    if (enabled && modIds.length > 0) {
+      const blocked = new Map<string, ModInstallationState>();
+      await Promise.all(
+        modIds.map(async (modId) => {
+          const mod = this.state.modsWithState[modId];
+          if (mod?.state !== "installed") {
+            return;
+          }
+          const installationState = await this.installationStateFor(installPath, mod);
+          if (installationState !== "ok") {
+            blocked.set(modId, installationState);
+          }
+        }),
+      );
+
+      if (blocked.size > 0) {
+        this.nextState.modsWithState = Object.fromEntries(
+          Object.entries(this.state.modsWithState).map(([modId, mod]) => [
+            modId,
+            blocked.has(modId)
+              ? { ...mod, installationState: blocked.get(modId), status: "error" as const }
+              : mod,
+          ]),
+        );
+        const names = [...blocked.keys()]
+          .map((modId) => modName(this.state.modsWithState[modId]))
+          .join("\n");
+        this.context.api.showErrorNotification(
+          "Cannot enable mod",
+          new Error(
+            "The mod's staging folder is missing or empty, so there is nothing to deploy. " +
+              "Reinstall the mod from its archive, then enable it.",
+          ),
+          { allowReport: false, message: names },
+        );
+        modIds = modIds.filter((modId) => !blocked.has(modId));
+      }
+    }
+
+    if (modIds.length === 0) {
+      return;
+    }
+
     return setModsEnabled(this.context.api, profileId, modIds, enabled);
   }
 
@@ -1711,6 +1817,65 @@ class ModList extends ComponentEx<IProps, IComponentState> {
     }
   };
 
+  /**
+   * Reinstalls a mod marked Error and, once its files are back in staging, enables it.
+   * The archive is the same one Vortex installed from; nothing is downloaded again.
+   */
+  private reinstallErrorMod = (modId: string) => {
+    const { gameMode, mods } = this.props;
+    const mod = mods[modId];
+    if (mod === undefined) {
+      return;
+    }
+    if (!truthy(mod.archiveId)) {
+      this.context.api.showErrorNotification(
+        "Cannot reinstall mod",
+        new Error("This mod has no associated download archive."),
+        { allowReport: false, message: modName(mod) },
+      );
+      return;
+    }
+
+    const choices = getSafe(mod, ["attributes", "installerChoices"], undefined);
+    const installOpts: IInstallOptions =
+      choices !== undefined ? { choices, allowAutoEnable: false } : { allowAutoEnable: false };
+
+    this.context.api.events.emit(
+      "start-install-download",
+      mod.archiveId,
+      installOpts,
+      (err: Error | null) => {
+        if (err !== null) {
+          return;
+        }
+        void this.enableAfterReinstall(modId, gameMode);
+      },
+    );
+  };
+
+  private async enableAfterReinstall(modId: string, gameMode: string) {
+    const mod = this.props.mods[modId];
+    if (mod === undefined) {
+      return;
+    }
+
+    const installationState = await this.installationStateFor(this.props.installPath, mod);
+    if (installationState !== "ok") {
+      await this.updateModsWithState(this.props);
+      this.context.api.showErrorNotification(
+        "Cannot enable reinstalled mod",
+        new Error(
+          "The mod's staging folder is still missing or empty. Check that its archive " +
+            "contains files and reinstall it again.",
+        ),
+        { allowReport: false, message: modName(mod) },
+      );
+      return;
+    }
+
+    this.context.api.events.emit("mods-enabled", [modId], true, gameMode);
+  }
+
   private reinstall = (modIds: string | string[]) => {
     const { gameMode, mods, modState } = this.props;
     if (Array.isArray(modIds)) {
@@ -1885,6 +2050,7 @@ function mapStateToProps(state: IState): IConnectedProps {
     language: state.settings.interface.language,
     installPath: selectors.installPath(state),
     downloadPath: selectors.downloadPath(state),
+    deploymentFailures: state.session.mods?.deploymentFailures?.[gameMode] ?? [],
     showDropzone: state.settings.mods.showDropzone,
     autoInstall: state.settings.automation.install,
     useModernLayout: state.settings.window.useModernLayout ?? true,

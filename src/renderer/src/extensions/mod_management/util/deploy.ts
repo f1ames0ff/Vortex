@@ -44,6 +44,7 @@ import BlacklistSet, { fileOverrideEntries, skipListEntries } from "./BlacklistS
 import { getActivator, getCurrentActivator } from "./deploymentMethods";
 import { NoDeployment } from "./exceptions";
 import { dealWithExternalChanges } from "./externalChanges";
+import { purgeWithNativeCore } from "./nativeDeploy";
 const MERGE_SUBDIR = "zzz_merge";
 
 export function genSubDirFunc(game: IGame, modType: IModType): (mod: IMod) => string {
@@ -309,6 +310,26 @@ async function purgeModsImpl(
 
         await api.emitAndAwait("will-purge", profile.id, lastDeployment);
         onProgress(10, "Removing links");
+
+        // Feature-flagged native purge. The core verifies that each output is
+        // still a hardlink before removing it and keeps failed entries in the
+        // manifest, so the fallback below stays available for every other
+        // deployment method.
+        if (
+          await purgeWithNativeCore(
+            api,
+            gameId,
+            stagingPath,
+            modPaths,
+            modTypes,
+            activator,
+            lastDeployment,
+            onProgress,
+          )
+        ) {
+          await saveLeftovers(lastDeployment);
+          return;
+        }
 
         await dealWithExternalChanges(
           api,

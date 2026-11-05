@@ -53,6 +53,18 @@ export function reportDeploymentFailures(api: IExtensionApi, failures: IDeployme
   const t = api.translate;
   const grouped = byMod(failures);
   const truncated = failures.length >= MAX_STORED_DEPLOYMENT_FAILURES;
+  const withReason = failures.filter((failure) => failure.message !== undefined).length;
+
+  const intro =
+    withReason === 0
+      ? t(
+          "These files could not be written to the game directory, usually because " +
+            "another application had them open. Close it and deploy again.",
+        )
+      : t(
+          "These files could not be deployed. The deployment engine reported the reason " +
+            "for each failure below.",
+        );
 
   api.sendNotification({
     id: DEPLOYMENT_FAILED_NOTIFICATION_ID,
@@ -65,10 +77,12 @@ export function reportDeploymentFailures(api: IExtensionApi, failures: IDeployme
           const modSections = Array.from(grouped.entries()).map(([mod, modFailures]) =>
             [
               `[b]${mod}[/b]`,
-              ...modFailures.map(
-                (failure) =>
-                  `[url=cb://reveal/${encodeURIComponent(failure.outputPath)}]${failure.relPath}[/url]`,
-              ),
+              ...modFailures.map((failure) => {
+                const link = `[url=cb://reveal/${encodeURIComponent(failure.outputPath)}]${failure.relPath}[/url]`;
+                return failure.message === undefined
+                  ? link
+                  : `${link}<br/>[i]${failure.message}[/i]`;
+              }),
             ].join("<br/>"),
           );
 
@@ -78,10 +92,7 @@ export function reportDeploymentFailures(api: IExtensionApi, failures: IDeployme
               "Files could not be deployed",
               {
                 bbcode:
-                  t(
-                    "These files could not be written to the game directory, usually because " +
-                      "another application had them open. Close it and deploy again.",
-                  ) +
+                  intro +
                   "<br/><br/>" +
                   modSections.join("<br/><br/>") +
                   (truncated

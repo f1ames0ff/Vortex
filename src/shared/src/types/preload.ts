@@ -34,6 +34,14 @@ import type {
   WireUploadRequest,
 } from "./ipc";
 import type { Level } from "./logging";
+import type {
+  NativeDeployPlanSummary,
+  NativeDeployRequest,
+  NativeDeployResult,
+  NativeDeployStatus,
+  NativePurgeRequest,
+  NativePurgeResult,
+} from "./nativeDeploy";
 import type { PersistedHive, PersistedState } from "./state";
 
 /** Globals exposed by the preload script to the renderer */
@@ -54,6 +62,9 @@ export interface Api {
 
   /** Example APIs */
   example: Example;
+
+  /** Native deployment core API (feature-flagged by main). */
+  nativeDeploy: NativeDeployApi;
 
   /** Persistence API - for syncing state to main process for storage */
   persist: PersistApi;
@@ -591,6 +602,20 @@ export interface HashApi {
 }
 
 /** API for receiving feature flag updates pushed from the main process */
+export interface NativeDeployApi {
+  /** Reports whether the native deployment path is enabled and its core is reachable. */
+  status(): Promise<NativeDeployStatus>;
+
+  /** Computes the deployment diff without touching the game directory. */
+  plan(request: NativeDeployRequest): Promise<NativeDeployPlanSummary>;
+
+  /** Applies a deployment through `vortex-core`. */
+  deploy(request: NativeDeployRequest): Promise<NativeDeployResult>;
+
+  /** Removes a deployment and restores backups through `vortex-core`. */
+  purge(request: NativePurgeRequest): Promise<NativePurgeResult>;
+}
+
 export interface FeatureFlagsApi {
   /** Registers a callback invoked whenever main pushes updated flags. Returns an unsubscribe function. */
   onSynchronize(callback: (flags: FeatureFlag[]) => void): () => void;

@@ -12,6 +12,7 @@ import type { IMod } from "./types/IMod";
 import type BlacklistSet from "./util/BlacklistSet";
 import { fileOverrideEntries } from "./util/BlacklistSet";
 import renderModName from "./util/modName";
+import { deployWithNativeCore } from "./util/nativeDeploy";
 
 async function ensureWritable(api: IExtensionApi, modPath: string): Promise<void> {
   await fs.ensureDirWritableAsync(modPath, () =>
@@ -70,6 +71,27 @@ async function deployMods(
 
   try {
     await ensureWritable(api, destinationPath);
+
+    // Feature-flagged first slice: hardlink deployments can run in the native
+    // core. Anything else (symlink/move, unsupported binary) keeps the
+    // existing TypeScript path.
+    const nativeResult = await deployWithNativeCore(
+      api,
+      gameId,
+      installationPath,
+      destinationPath,
+      mods,
+      method,
+      lastActivation,
+      typeId,
+      skipFiles,
+      subDir,
+      progressCB,
+    );
+    if (nativeResult !== undefined) {
+      return nativeResult;
+    }
+
     const normalize: Normalize = await getNormalizeFunc(destinationPath);
     await method.prepare(destinationPath, true, lastActivation, normalize);
 

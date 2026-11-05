@@ -1,5 +1,10 @@
 # yaml-language-server: $schema=https://www.schemastore.org/pnpm-workspace.json
 
+# pnpm 11 otherwise runs `pnpm install` before a script whenever package.json
+# changes. This repo's postinstall electron-rebuild attempts to build the
+# Windows-only winapi-bindings module and fails on Linux. Keep installs explicit.
+verifyDepsBeforeRun: false
+
 packages:
   - ./src/shared
   - ./packages/*

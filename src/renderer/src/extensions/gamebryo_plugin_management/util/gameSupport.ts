@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import * as path from "path";
 
 import Bluebird from "bluebird";
@@ -373,12 +374,61 @@ export function initGameSupport(api: IExtensionApi): Bluebird<void> {
     });
 }
 
-export function appDataPath(gameMode: string): string {
-  const dataPath = gameSupport.get(gameMode, "appDataPath");
+/**
+ * Path inside a Steam Proton prefix corresponding to `%LOCALAPPDATA%\<dataPath>`.
+ * Skyrim reads plugins.txt/loadorder.txt there, not from the Linux user's
+ * local app-data folder, when it runs through Proton.
+ */
+function protonAppDataPath(gameMode: string, dataPath: string): string | undefined {
+  if (process.platform !== "linux") {
+    return undefined;
+  }
 
+  const api = getApi();
+  if (api === undefined) {
+    return undefined;
+  }
+  const state = api.getState();
+  const discovery = discoveryForGame(gameMode);
+  const game = gameById(state, gameMode);
+  const appId = game?.details?.steamAppId;
+  if (discovery?.path === undefined || appId === undefined) {
+    return undefined;
+  }
+
+  // Steam games live in <steamapps>/common/<game>.
+  const steamApps = path.resolve(discovery.path, "..", "..");
+  const prefixPath = path.join(
+    steamApps,
+    "compatdata",
+    String(appId),
+    "pfx",
+    "drive_c",
+    "users",
+    "steamuser",
+    "AppData",
+    "Local",
+    dataPath,
+  );
+  return existsSync(prefixPath) ? prefixPath : undefined;
+}
+
+/** Where Vortex wrote plugin files before it knew about the Proton prefix. */
+export function legacyAppDataPath(gameMode: string): string {
+  const dataPath = gameSupport.get(gameMode, "appDataPath");
   return process.env.LOCALAPPDATA !== undefined
     ? path.join(process.env.LOCALAPPDATA, dataPath)
     : path.resolve(getVortexPath("appData"), "..", "Local", dataPath);
+}
+
+export function appDataPath(gameMode: string): string {
+  const dataPath = gameSupport.get(gameMode, "appDataPath");
+
+  if (process.env.LOCALAPPDATA !== undefined) {
+    return path.join(process.env.LOCALAPPDATA, dataPath);
+  }
+
+  return protonAppDataPath(gameMode, dataPath) ?? legacyAppDataPath(gameMode);
 }
 
 export function gameDataPath(gameMode: string): string {

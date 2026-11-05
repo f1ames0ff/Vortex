@@ -191,7 +191,7 @@ export function parseCommandline(argv: string[], electronIsShitHack: boolean): I
     argv = electronIsShitArgumentSort(argv);
   }
 
-  let version: string = "1.0.0";
+  let version: string = "0.1.0";
   try {
     // won't happen in regular operation but lets us test this function outside vortex
     version = app.getVersion();

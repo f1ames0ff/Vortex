@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import * as path from "path";
 
 import { parse } from "simple-vdf";
@@ -36,6 +37,60 @@ export function getCompatDataPath(steamAppsPath: string, appId: string): string 
  */
 export function getWinePrefixPath(compatDataPath: string): string {
   return path.join(compatDataPath, "pfx");
+}
+
+/**
+ * Find a game's "My Games" folder inside a Steam Proton prefix.
+ *
+ * The game may live under any app id (and older prefixes used "user" rather
+ * than "steamuser"), so locate the folder by its game name rather than
+ * assuming an app id.
+ */
+export function protonMyGamesPath(
+  gamePath: string | undefined,
+  gameFolder: string,
+  markerFile?: string,
+  appId?: string | number,
+): string | undefined {
+  if (process.platform !== "linux" || gamePath === undefined) {
+    return undefined;
+  }
+
+  const steamApps = path.resolve(gamePath, "..", "..");
+  const compatdata = path.join(steamApps, "compatdata");
+  if (!existsSync(compatdata)) {
+    return undefined;
+  }
+
+  try {
+    const appIds =
+      appId !== undefined && `${appId}` !== "" ? [`${appId}`] : readdirSync(compatdata);
+    for (const currentAppId of appIds) {
+      for (const user of ["steamuser", "user"]) {
+        const myGames = path.join(
+          compatdata,
+          currentAppId,
+          "pfx",
+          "drive_c",
+          "users",
+          user,
+          "Documents",
+          "My Games",
+        );
+        const gameDir = path.join(myGames, gameFolder);
+        const found =
+          markerFile !== undefined
+            ? existsSync(path.join(gameDir, markerFile))
+            : existsSync(gameDir) && readdirSync(gameDir).length > 0;
+        if (found) {
+          return myGames;
+        }
+      }
+    }
+  } catch {
+    // unreadable compatdata: fall back to the host documents folder
+  }
+  return undefined;
 }
 
 /**

@@ -100,14 +100,14 @@ function OptionsFilterComponent(props: IProps & IBoundProps) {
 class OptionsFilter implements ITableFilter {
   public static EMPTY = "__empty";
   public component: React.ComponentClass<IFilterProps>;
-  public raw = true;
+  public raw: string | boolean = true;
 
   private mMulti: boolean;
 
-  constructor(options: Options | (() => Options), multi: boolean, raw?: boolean) {
+  constructor(options: Options | (() => Options), multi: boolean, raw: string | boolean = true) {
     this.component = WrappedOptionsFilterComponent({ options, multi });
     this.mMulti = multi;
-    this.raw = raw !== false;
+    this.raw = raw;
   }
 
   public matches(filter: any, value: any): boolean {
