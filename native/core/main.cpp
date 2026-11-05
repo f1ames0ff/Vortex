@@ -5,6 +5,7 @@
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
 #include "vortex/core/archive.hpp"
+#include "vortex/core/deps.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/status.hpp"
@@ -279,6 +280,258 @@ fs::path journalDirectory(const json& params, const fs::path& stagingPath) {
     return value.empty() ? stagingPath / ".vortex-journal" : pathFromUtf8(value);
 }
 
+std::optional<std::string> optString(const json& object, const char* key) {
+    if (!object.is_object() || !object.contains(key) || object[key].is_null()) {
+        return std::nullopt;
+    }
+    if (object[key].is_string()) {
+        return object[key].get<std::string>();
+    }
+    if (object[key].is_number_integer()) {
+        return std::to_string(object[key].get<std::int64_t>());
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> stringArray(const json& object, const char* key) {
+    std::vector<std::string> result;
+    if (!object.is_object() || !object.contains(key) || !object[key].is_array()) {
+        return result;
+    }
+    for (const auto& item : object[key]) {
+        if (item.is_string()) {
+            result.push_back(item.get<std::string>());
+        }
+    }
+    return result;
+}
+
+vortex::core::ModReference parseReference(const json& value) {
+    vortex::core::ModReference reference;
+    if (!value.is_object()) {
+        return reference;
+    }
+    reference.id = optString(value, "id");
+    reference.idHint = optString(value, "idHint");
+    reference.md5Hint = optString(value, "md5Hint");
+    reference.archiveId = optString(value, "archiveId");
+    reference.fileMD5 = optString(value, "fileMD5");
+    reference.fileExpression = optString(value, "fileExpression");
+    reference.logicalFileName = optString(value, "logicalFileName");
+    reference.tag = optString(value, "tag");
+    reference.gameId = optString(value, "gameId");
+    reference.versionMatch = optString(value, "versionMatch");
+    if (value.contains("repo") && value["repo"].is_object()) {
+        vortex::core::RepoReference repo;
+        repo.repository = value["repo"].value("repository", std::string{});
+        repo.modId = optString(value["repo"], "modId");
+        repo.fileId = optString(value["repo"], "fileId");
+        reference.repo = std::move(repo);
+    }
+    return reference;
+}
+
+vortex::core::LookupMod parseLookupMod(const json& value, std::size_t fallbackIndex) {
+    vortex::core::LookupMod mod;
+    if (!value.is_object()) {
+        return mod;
+    }
+    const auto& attrs =
+        value.contains("attributes") && value["attributes"].is_object() ? value["attributes"]
+                                                                       : value;
+    mod.id = value.value("id", "mod-" + std::to_string(fallbackIndex));
+    mod.fileMD5 = optString(attrs, "fileMD5");
+    mod.fileName = optString(attrs, "fileName");
+    mod.name = optString(attrs, "name");
+    mod.logicalFileName = optString(attrs, "logicalFileName");
+    mod.customFileName = optString(attrs, "customFileName");
+    mod.version = optString(attrs, "version");
+    mod.fileId = optString(attrs, "fileId");
+    mod.modId = optString(attrs, "modId");
+    mod.source = optString(attrs, "source");
+    mod.referenceTag = optString(attrs, "referenceTag");
+    mod.state = optString(value, "state");
+    mod.additionalLogicalFileNames = stringArray(attrs, "additionalLogicalFileNames");
+    mod.referenceTags = stringArray(attrs, "referenceTags");
+    mod.game = stringArray(attrs, "game");
+    if (attrs.contains("installerChoices")) {
+        mod.installerChoices = attrs["installerChoices"];
+    }
+    if (attrs.contains("fileList")) {
+        mod.fileList = attrs["fileList"];
+    }
+    if (attrs.contains("patches")) {
+        mod.patches = attrs["patches"];
+    }
+    return mod;
+}
+
+vortex::core::DownloadInfo parseDownload(const json& value, std::size_t fallbackIndex) {
+    vortex::core::DownloadInfo download;
+    if (!value.is_object()) {
+        return download;
+    }
+    download.id = value.value("id", "download-" + std::to_string(fallbackIndex));
+    download.fileMD5 = optString(value, "fileMD5");
+    download.localPath = optString(value, "localPath");
+    download.logicalFileName = optString(value, "logicalFileName");
+    download.version = optString(value, "version");
+    download.fileId = optString(value, "fileId");
+    download.modId = optString(value, "modId");
+    download.source = optString(value, "source");
+    download.referenceTag = optString(value, "referenceTag");
+    download.referenceTags = stringArray(value, "referenceTags");
+    download.game = stringArray(value, "game");
+    download.state = value.value("state", std::string("finished"));
+    download.fileTime = value.value("fileTime", std::int64_t{0});
+
+    if (value.contains("modInfo") && value["modInfo"].is_object()) {
+        const auto& modInfo = value["modInfo"];
+        if (!download.localPath.has_value()) {
+            download.localPath = optString(modInfo, "name");
+        }
+        if (!download.logicalFileName.has_value()) {
+            download.logicalFileName = optString(modInfo, "name");
+        }
+        if (!download.version.has_value()) {
+            download.version = optString(modInfo, "version");
+            if (!download.version.has_value() && modInfo.contains("meta") &&
+                modInfo["meta"].is_object()) {
+                download.version = optString(modInfo["meta"], "fileVersion");
+            }
+        }
+        if (!download.source.has_value()) {
+            download.source = optString(modInfo, "source");
+        }
+        download.referenceTag = optString(modInfo, "referenceTag");
+        download.referenceTags = stringArray(modInfo, "referenceTags");
+        if (modInfo.contains("nexus") && modInfo["nexus"].is_object() &&
+            modInfo["nexus"].contains("ids") && modInfo["nexus"]["ids"].is_object()) {
+            download.modId = optString(modInfo["nexus"]["ids"], "modId");
+            download.fileId = optString(modInfo["nexus"]["ids"], "fileId");
+        }
+        if (modInfo.contains("meta") && modInfo["meta"].is_object() &&
+            modInfo["meta"].contains("details") && modInfo["meta"]["details"].is_object()) {
+            if (!download.modId.has_value()) {
+                download.modId = optString(modInfo["meta"]["details"], "modId");
+            }
+            if (!download.fileId.has_value()) {
+                download.fileId = optString(modInfo["meta"]["details"], "fileId");
+            }
+        }
+    }
+    return download;
+}
+
+vortex::core::RuleInfo parseRule(const json& value, std::size_t fallbackIndex) {
+    vortex::core::RuleInfo rule;
+    if (!value.is_object()) {
+        return rule;
+    }
+    rule.index = value.value("index", static_cast<int>(fallbackIndex));
+    rule.reference = parseReference(value.contains("reference") ? value["reference"] : json{});
+    rule.type = value.value("type", std::string{});
+    rule.ignored = value.value("ignored", false);
+    rule.phase = value.value("phase", 0);
+    if (value.contains("extra") && value["extra"].is_object()) {
+        if (!value.contains("phase")) {
+            rule.phase = value["extra"].value("phase", 0);
+        }
+        rule.localPath = optString(value["extra"], "localPath");
+        if (!value.contains("patches") && value["extra"].contains("patches")) {
+            rule.patches = value["extra"]["patches"];
+        }
+    }
+    if (rule.type == "recommends") {
+        rule.phase = 666;
+    }
+    if (value.contains("installerChoices")) {
+        rule.installerChoices = value["installerChoices"];
+    }
+    if (value.contains("fileList")) {
+        rule.fileList = value["fileList"];
+    }
+    if (value.contains("patches")) {
+        rule.patches = value["patches"];
+    }
+    return rule;
+}
+
+std::vector<vortex::core::RuleInfo> readRules(const json& params) {
+    if (!params.contains("rules") || !params["rules"].is_array()) {
+        throw std::runtime_error("params.rules must be an array");
+    }
+    std::vector<vortex::core::RuleInfo> rules;
+    rules.reserve(params["rules"].size());
+    for (std::size_t index = 0; index < params["rules"].size(); ++index) {
+        rules.push_back(parseRule(params["rules"][index], index));
+    }
+    return rules;
+}
+
+std::vector<vortex::core::LookupMod> readLookupMods(const json& params) {
+    std::vector<vortex::core::LookupMod> mods;
+    if (!params.contains("mods") || !params["mods"].is_array()) {
+        return mods;
+    }
+    mods.reserve(params["mods"].size());
+    for (std::size_t index = 0; index < params["mods"].size(); ++index) {
+        mods.push_back(parseLookupMod(params["mods"][index], index));
+    }
+    return mods;
+}
+
+std::vector<vortex::core::DownloadInfo> readDownloads(const json& params) {
+    std::vector<vortex::core::DownloadInfo> downloads;
+    if (!params.contains("downloads") || !params["downloads"].is_array()) {
+        return downloads;
+    }
+    downloads.reserve(params["downloads"].size());
+    for (std::size_t index = 0; index < params["downloads"].size(); ++index) {
+        downloads.push_back(parseDownload(params["downloads"][index], index));
+    }
+    return downloads;
+}
+
+json dependencyJson(const vortex::core::DependencyEntry& entry) {
+    json value = {
+        {"ruleIndex", entry.ruleIndex},
+        {"ruleId", entry.ruleId},
+        {"type", entry.type},
+        {"phase", entry.phase},
+        {"ignored", entry.ignored},
+        {"status", entry.status},
+    };
+    if (entry.modId.has_value()) {
+        value["modId"] = *entry.modId;
+    }
+    if (entry.downloadId.has_value()) {
+        value["downloadId"] = *entry.downloadId;
+    }
+    return value;
+}
+
+json dependenciesJson(const std::vector<vortex::core::DependencyEntry>& entries) {
+    json result = json::array();
+    for (const auto& entry : entries) {
+        result.push_back(dependencyJson(entry));
+    }
+    return result;
+}
+
+json collectionPlanJson(const vortex::core::CollectionPlan& plan) {
+    json phases = json::array();
+    for (const auto phase : plan.phases) {
+        phases.push_back(phase);
+    }
+    return {
+        {"members", dependenciesJson(plan.members)},
+        {"phases", std::move(phases)},
+        {"totalRequired", plan.totalRequired},
+        {"totalOptional", plan.totalOptional},
+    };
+}
+
 json dispatch(CoreState& state, const Request& request) {
     const auto& params = request.params;
 
@@ -288,7 +541,9 @@ json dispatch(CoreState& state, const Request& request) {
             {"protocol", CORE_PROTOCOL},
             {"capabilities",
              {"ping", "scan", "staging.status", "install.apply", "game.registry",
-              "archive.list", "archive.extract", "hash.files", "plan", "deploy", "purge"}},
+              "archive.list", "archive.extract", "hash.files", "deps.matchMod",
+              "deps.matchDownload", "deps.resolve", "collection.plan", "plan", "deploy",
+              "purge"}},
             {"pid", 0},
         };
     }
@@ -304,6 +559,55 @@ json dispatch(CoreState& state, const Request& request) {
             result.push_back(gameJson(game));
         }
         return {{"games", std::move(result)}};
+    }
+
+    if (request.method == "deps.matchMod") {
+        const auto reference = parseReference(params.contains("reference") ? params["reference"]
+                                                                           : json{});
+        const auto mods = readLookupMods(params);
+        vortex::core::RuleInfo spec;
+        bool hasSpec = false;
+        if (params.contains("installSpec") && params["installSpec"].is_object()) {
+            const auto& raw = params["installSpec"];
+            hasSpec = true;
+            if (raw.contains("installerChoices")) {
+                spec.installerChoices = raw["installerChoices"];
+            }
+            if (raw.contains("fileList")) {
+                spec.fileList = raw["fileList"];
+            }
+            if (raw.contains("patches")) {
+                spec.patches = raw["patches"];
+            }
+        }
+        const auto modId = vortex::core::matchModId(mods, reference, hasSpec ? &spec : nullptr);
+        if (modId.has_value()) {
+            return {{"modId", *modId}};
+        }
+        return json::object();
+    }
+
+    if (request.method == "deps.matchDownload") {
+        const auto reference = parseReference(params.contains("reference") ? params["reference"]
+                                                                           : json{});
+        const auto downloads = readDownloads(params);
+        const auto downloadId = vortex::core::matchDownloadId(downloads, reference);
+        if (downloadId.has_value()) {
+            return {{"downloadId", *downloadId}};
+        }
+        return json::object();
+    }
+
+    if (request.method == "deps.resolve" || request.method == "collection.plan") {
+        const auto rules = readRules(params);
+        const auto mods = readLookupMods(params);
+        const auto downloads = readDownloads(params);
+        if (request.method == "deps.resolve") {
+            const auto members = vortex::core::resolveDependencies(rules, mods, downloads);
+            return {{"dependencies", dependenciesJson(members)}};
+        }
+        const auto plan = vortex::core::planCollection(rules, mods, downloads);
+        return collectionPlanJson(plan);
     }
 
     if (request.method == "scan") {

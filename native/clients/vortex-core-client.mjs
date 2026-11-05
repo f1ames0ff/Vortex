@@ -69,6 +69,22 @@ export class VortexCoreClient {
     return this.request("hash.files", request);
   }
 
+  matchMod(request) {
+    return this.request("deps.matchMod", request);
+  }
+
+  matchDownload(request) {
+    return this.request("deps.matchDownload", request);
+  }
+
+  resolveDependencies(request) {
+    return this.request("deps.resolve", request);
+  }
+
+  planCollection(request) {
+    return this.request("collection.plan", request);
+  }
+
   request(method, params = {}) {
     const id = this.#nextId++;
     const request = { id, method, params };

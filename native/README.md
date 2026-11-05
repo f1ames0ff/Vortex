@@ -53,7 +53,11 @@ Supported requests:
 {"id":9,"method":"archive.list","params":{"archive":"/downloads/ModA.7z","sevenZip":"/path/to/7z"}}
 {"id":10,"method":"archive.extract","params":{"archive":"/downloads/ModA.7z","destination":"/tmp/ModA.extracted","sevenZip":"/path/to/7z"}}
 {"id":11,"method":"hash.files","params":{"algorithm":"md5","files":["/tmp/ModA/a.txt"]}}
-{"id":12,"method":"shutdown","params":{}}
+{"id":12,"method":"deps.matchMod","params":{"reference":{"logicalFileName":"ModA"},"mods":[...]}}
+{"id":13,"method":"deps.matchDownload","params":{"reference":{"tag":"rule-tag"},"downloads":[...]}}
+{"id":14,"method":"deps.resolve","params":{"rules":[...],"mods":[...],"downloads":[...]}}
+{"id":15,"method":"collection.plan","params":{"rules":[...],"mods":[...],"downloads":[...]}}
+{"id":16,"method":"shutdown","params":{}}
 ```
 
 Every response echoes `id` and contains either `result` or `error`. Commands
@@ -88,6 +92,16 @@ before extraction, and archives containing absolute paths, `..` or symlinks are
 rejected. `archive.extract` passes `-snl-` so symlinks are not recreated.
 `hash.files` streams MD5 or XXH64 over a batch on worker threads; XXH64 is
 returned as the same big-endian base64 digest the renderer uses.
+
+`deps.matchMod`/`deps.matchDownload` implement the TS reference matching
+priority: id/idHint, collection tags, file MD5, repo ids, logical file names,
+archive-name expressions, version ranges and install-spec equality.
+`deps.resolve` fills the per-rule mod/download/status triple from reality;
+`collection.plan` groups those rules by authored phase and adds the trailing
+`OPTIONAL_PHASE` (666), required/optional counts and the reconstructed statuses.
+The matcher covers the common semver range forms (`^`, `~`, comparators,
+wildcards, `||`); hyphen ranges and full minimatch character classes are not
+implemented yet.
 
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.

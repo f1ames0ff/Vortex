@@ -5,6 +5,7 @@
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
 #include "vortex/core/archive.hpp"
+#include "vortex/core/deps.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/process.hpp"
@@ -533,6 +534,119 @@ void testArchiveListAndExtract() {
 #endif
 }
 
+void testDependencyMatching() {
+    vortex::core::LookupMod tagged;
+    tagged.id = "tagged";
+    tagged.referenceTag = "tag-1";
+    tagged.game = {"skyrimse"};
+    vortex::core::ModReference byTag;
+    byTag.tag = "tag-1";
+    byTag.gameId = "skyrimse";
+    check(vortex::core::matchModId({tagged}, byTag) == "tagged", "tag match");
+
+    vortex::core::LookupMod hashed;
+    hashed.id = "hashed";
+    hashed.fileMD5 = "md5-1";
+    vortex::core::ModReference byMd5;
+    byMd5.fileMD5 = "md5-1";
+    check(vortex::core::matchModId({hashed}, byMd5) == "hashed", "md5 match");
+
+    vortex::core::LookupMod expression;
+    expression.id = "expression";
+    expression.fileName = "Cool Mod-123-1-0.7z";
+    vortex::core::ModReference byExpression;
+    byExpression.fileExpression = "Cool Mod*";
+    check(vortex::core::matchModId({expression}, byExpression) == "expression",
+          "file expression match");
+
+    vortex::core::LookupMod repo;
+    repo.id = "repo";
+    repo.source = "nexus";
+    repo.modId = "123";
+    repo.fileId = "456";
+    vortex::core::ModReference byRepo;
+    vortex::core::RepoReference repoReference;
+    repoReference.repository = "nexus";
+    repoReference.modId = "123";
+    repoReference.fileId = "456";
+    byRepo.repo = repoReference;
+    check(vortex::core::matchModId({repo}, byRepo) == "repo", "repo match");
+
+    vortex::core::LookupMod variantA;
+    variantA.id = "variant-a";
+    variantA.logicalFileName = "Variant Mod";
+    variantA.installerChoices = {{"a", "1"}};
+    vortex::core::LookupMod variantB;
+    variantB.id = "variant-b";
+    variantB.logicalFileName = "Variant Mod";
+    variantB.installerChoices = {{"a", "2"}};
+    vortex::core::ModReference variantRef;
+    variantRef.logicalFileName = "Variant Mod";
+    vortex::core::RuleInfo spec;
+    spec.installerChoices = {{"a", "2"}};
+    check(vortex::core::matchModId({variantA, variantB}, variantRef, &spec) == "variant-b",
+          "install spec match");
+
+    vortex::core::DownloadInfo download;
+    download.id = "download";
+    download.state = "finished";
+    download.referenceTag = "download-tag";
+    vortex::core::ModReference byDownloadTag;
+    byDownloadTag.tag = "download-tag";
+    check(vortex::core::matchDownloadId({download}, byDownloadTag) == "download",
+          "download tag match");
+
+    vortex::core::LookupMod versioned;
+    versioned.id = "versioned";
+    versioned.logicalFileName = "Versioned Mod";
+    versioned.version = "1.5.2";
+    vortex::core::ModReference byVersion;
+    byVersion.logicalFileName = "Versioned Mod";
+    byVersion.versionMatch = "^1.5.0";
+    check(vortex::core::matchModId({versioned}, byVersion) == "versioned", "semver match");
+}
+
+void testCollectionPlan() {
+    vortex::core::LookupMod mod;
+    mod.id = "tagged";
+    mod.referenceTag = "tag-1";
+
+    vortex::core::RuleInfo required;
+    required.index = 0;
+    required.type = "requires";
+    required.phase = 1;
+    required.reference.tag = "tag-1";
+
+    vortex::core::RuleInfo missing;
+    missing.index = 1;
+    missing.type = "requires";
+    missing.phase = 4;
+    missing.reference.tag = "missing";
+
+    vortex::core::RuleInfo optional;
+    optional.index = 2;
+    optional.type = "recommends";
+    optional.phase = 666;
+    optional.reference.tag = "tag-1";
+
+    vortex::core::RuleInfo ignored;
+    ignored.index = 3;
+    ignored.type = "requires";
+    ignored.phase = 0;
+    ignored.ignored = true;
+    ignored.reference.tag = "tag-1";
+
+    const auto plan = vortex::core::planCollection({required, missing, optional, ignored}, {mod}, {});
+    check(plan.members.size() == 4, "plan member count");
+    check(plan.totalRequired == 3, "plan required count");
+    check(plan.totalOptional == 1, "plan optional count");
+    check(plan.phases == std::vector<int>({0, 1, 4, 666}), "plan phases");
+    check(plan.members[0].status == "installed", "installed member status");
+    check(plan.members[1].status == "pending", "missing member status");
+    check(plan.members[2].phase == 666, "optional phase");
+    check(plan.members[3].status == "ignored", "ignored member status");
+}
+
 void testInstallDuplicateDestinations() {
     const auto root = makeRoot("install-duplicates");
     const auto temp = root / "temp";
@@ -760,6 +874,8 @@ int main() {
         testInstallDuplicateDestinations();
         testHashVectors();
         testArchiveListAndExtract();
+        testDependencyMatching();
+        testCollectionPlan();
         testTomlParsing();
         testGameDescriptorParsing();
         testMalformedToml();

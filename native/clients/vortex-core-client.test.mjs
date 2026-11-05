@@ -164,6 +164,25 @@ test("hashes files in the core", async () => {
   assert.equal(result.results[0].bytes, 5);
 });
 
+test("resolves dependencies and plans a collection", async () => {
+  const rules = [
+    { type: "requires", reference: { tag: "rule-a", gameId: "skyrimse" }, phase: 1 },
+    { type: "recommends", reference: { tag: "missing", gameId: "skyrimse" } },
+  ];
+  const mods = [{ id: "mod-a", state: "installed", referenceTag: "rule-a" }];
+
+  const resolved = await client.resolveDependencies({ rules, mods, downloads: [] });
+  assert.equal(resolved.dependencies.length, 2);
+  assert.equal(resolved.dependencies[0].modId, "mod-a");
+  assert.equal(resolved.dependencies[0].status, "installed");
+  assert.equal(resolved.dependencies[1].status, "pending");
+
+  const plan = await client.planCollection({ rules, mods, downloads: [] });
+  assert.deepEqual(plan.phases, [1, 666]);
+  assert.equal(plan.totalRequired, 1);
+  assert.equal(plan.totalOptional, 1);
+});
+
 test("lists and extracts archives through 7-Zip", { skip: !existsSync(sevenZip) }, async () => {
   const archive = join(root, "sample.zip");
   execFileSync(sevenZip, ["a", "-tzip", archive, "a.txt"], {
