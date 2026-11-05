@@ -141,11 +141,19 @@ export function gameSupported(gameMode: string): boolean {
 }
 
 export function mygamesPath(gameMode: string): string {
-  return path.join(
-    util.getVortexPath("documents"),
-    "My Games",
-    gameSupport.get(gameMode, "mygamesPath"),
+  const gameFolder = gameSupport.get(gameMode, "mygamesPath");
+  const settingsFiles = gameSupport.get(gameMode, "gameSettingsFiles") ?? [];
+  const marker = settingsFiles.find((input) =>
+    typeof input === "string" ? true : input.optional !== true,
   );
+  const markerFile = typeof marker === "string" ? marker : marker?.name;
+  const discovery = discoveryForGame(gameMode);
+  const steamAppId = util.getGame(gameMode)?.details?.steamAppId;
+  const mygames =
+    util.protonMyGamesPath(discovery?.path, gameFolder, markerFile, steamAppId) ??
+    path.join(util.getVortexPath("documents"), "My Games");
+
+  return path.join(mygames, gameFolder);
 }
 
 export function gameSettingsFiles(gameMode: string, customPath: string): ISettingsFile[] {

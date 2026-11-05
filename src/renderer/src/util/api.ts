@@ -129,6 +129,7 @@ import github from "./github";
 import type { TFunction } from "./i18n";
 import { getCurrentLanguage } from "./i18n";
 import lazyRequire from "./lazyRequire";
+import { protonMyGamesPath } from "./linux/proton";
 import local from "./local";
 import makeReactive from "./makeReactive";
 import onceCB from "./onceCB";
@@ -275,6 +276,7 @@ export {
   Overlayable,
   pad,
   ProcessCanceled,
+  protonMyGamesPath,
   ReduxProp,
   relativeTime,
   removeMods,
