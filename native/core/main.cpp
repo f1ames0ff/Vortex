@@ -23,6 +23,7 @@ using namespace vortex::deployment;
 namespace {
 
 constexpr const char* CORE_VERSION = "0.1.0";
+constexpr int CORE_PROTOCOL = 2;
 
 struct Request {
     json id;
@@ -217,20 +218,31 @@ std::vector<vortex::core::InstallInstruction> readInstructions(const json& param
     return instructions;
 }
 
+fs::path pathFromUtf8(const std::string& value) {
+    const auto* begin = reinterpret_cast<const char8_t*>(value.data());
+    return fs::path(std::u8string(begin, begin + value.size()));
+}
+
 fs::path journalDirectory(const json& params, const fs::path& stagingPath) {
     const auto value = params.value("journalDir", std::string{});
-    return value.empty() ? stagingPath / ".vortex-journal" : fs::path(value);
+    return value.empty() ? stagingPath / ".vortex-journal" : pathFromUtf8(value);
 }
 
 json dispatch(CoreState& state, const Request& request) {
     const auto& params = request.params;
 
     if (request.method == "ping") {
-        return {{"version", CORE_VERSION}, {"pid", 0}};
+        return {
+            {"version", CORE_VERSION},
+            {"protocol", CORE_PROTOCOL},
+            {"capabilities",
+             {"ping", "scan", "staging.status", "install.apply", "plan", "deploy", "purge"}},
+            {"pid", 0},
+        };
     }
 
     if (request.method == "scan") {
-        const auto stagingPath = fs::path(params.value("staging", std::string{}));
+        const auto stagingPath = pathFromUtf8(params.value("staging", std::string{}));
         if (stagingPath.empty()) {
             throw std::runtime_error("params.staging is required");
         }
@@ -250,7 +262,7 @@ json dispatch(CoreState& state, const Request& request) {
     }
 
     if (request.method == "staging.status") {
-        const auto stagingPath = fs::path(params.value("staging", std::string{}));
+        const auto stagingPath = pathFromUtf8(params.value("staging", std::string{}));
         if (stagingPath.empty()) {
             throw std::runtime_error("params.staging is required");
         }
@@ -283,8 +295,8 @@ json dispatch(CoreState& state, const Request& request) {
 
     if (request.method == "install.apply") {
         vortex::core::InstallRequest install;
-        install.tempPath = fs::path(params.value("temp", std::string{}));
-        install.destinationPath = fs::path(params.value("destination", std::string{}));
+        install.tempPath = pathFromUtf8(params.value("temp", std::string{}));
+        install.destinationPath = pathFromUtf8(params.value("destination", std::string{}));
         if (install.tempPath.empty() || install.destinationPath.empty()) {
             throw std::runtime_error("params.temp and params.destination are required");
         }
@@ -293,10 +305,11 @@ json dispatch(CoreState& state, const Request& request) {
         install.concurrency = params.value("concurrency", std::size_t{8});
 
         const auto journalDirectory = params.value("journalDir", std::string{});
-        if (!journalDirectory.empty()) {
-            install.journalPath =
-                fs::path(journalDirectory) / (install.operationId + ".jsonl");
-        }
+        const auto journalRoot = journalDirectory.empty()
+                                     ? install.destinationPath.parent_path() /
+                                           ".vortex-install-journal"
+                                     : pathFromUtf8(journalDirectory);
+        install.journalPath = journalRoot / (install.operationId + ".jsonl");
 
         const auto report = vortex::core::applyInstall(install);
         return {
@@ -310,9 +323,9 @@ json dispatch(CoreState& state, const Request& request) {
         throw std::runtime_error("unknown method: " + request.method);
     }
 
-    const auto stagingPath = fs::path(params.value("staging", std::string{}));
-    const auto targetPath = fs::path(params.value("target", std::string{}));
-    const auto manifestPath = fs::path(params.value("manifest", std::string{}));
+    const auto stagingPath = pathFromUtf8(params.value("staging", std::string{}));
+    const auto targetPath = pathFromUtf8(params.value("target", std::string{}));
+    const auto manifestPath = pathFromUtf8(params.value("manifest", std::string{}));
     if (stagingPath.empty() || targetPath.empty() || manifestPath.empty()) {
         throw std::runtime_error("params.staging, params.target and params.manifest are required");
     }
@@ -384,7 +397,8 @@ json dispatch(CoreState& state, const Request& request) {
 }
 
 void writeResponse(const json& response) {
-    std::cout << response.dump() << '\n' << std::flush;
+    std::cout << response.dump(-1, ' ', false, json::error_handler_t::replace) << '\n'
+              << std::flush;
 }
 
 } // namespace

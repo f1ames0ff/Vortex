@@ -27,7 +27,11 @@ Journal::Journal(fs::path path, std::string operationId)
         }
     }
 
-    file_ = std::fopen(path_.string().c_str(), "ab");
+#ifdef _WIN32
+    file_ = _wfopen(path_.c_str(), L"ab");
+#else
+    file_ = std::fopen(path_.c_str(), "ab");
+#endif
     if (file_ == nullptr) {
         throw std::runtime_error("failed to open journal: " + path_.string());
     }
@@ -51,7 +55,8 @@ void Journal::event(const std::string& type, const nlohmann::json& details, bool
     record["op"] = operationId_;
     record["event"] = type;
 
-    const auto line = record.dump() + "\n";
+    const auto line =
+        record.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) + "\n";
     auto* stream = static_cast<std::FILE*>(file_);
     if (std::fwrite(line.data(), 1, line.size(), stream) != line.size()) {
         throw std::runtime_error("failed to write journal: " + path_.string());

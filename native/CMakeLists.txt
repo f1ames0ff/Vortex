@@ -38,6 +38,7 @@ find_package(Threads REQUIRED)
 
 add_library(vortex_core
     src/install.cpp
+    src/path_safety.cpp
     src/status.cpp
 )
 target_link_libraries(vortex_core PUBLIC vortex_deployment Threads::Threads)
@@ -48,6 +49,10 @@ target_link_libraries(vortex-deploy PRIVATE vortex_deployment)
 
 add_executable(vortex-core core/main.cpp)
 target_link_libraries(vortex-core PRIVATE vortex_core)
+
+# `cmake --install` staging point used by the packaging step. Electron-builder
+# picks this up as resources/native/vortex-core[.exe].
+install(TARGETS vortex-core RUNTIME DESTINATION native)
 
 add_executable(vortex-deployment-tests tests/main.cpp)
 target_link_libraries(vortex-deployment-tests PRIVATE vortex_core)

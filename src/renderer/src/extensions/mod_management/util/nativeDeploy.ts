@@ -61,6 +61,15 @@ export async function canDeployNatively(method: IDeploymentMethod): Promise<bool
   return status.enabled && status.available;
 }
 
+/** A core from before the capability handshake has no capability list. */
+function coreSupports(status: NativeDeployStatus, capability: string): boolean {
+  return status.capabilities === undefined || status.capabilities.includes(capability);
+}
+
+function isUnknownMethod(err: unknown): boolean {
+  return getErrorMessageOrDefault(err).includes("unknown method");
+}
+
 /**
  * Check many staging folders in the core process. Returns `undefined` when
  * the native path is disabled, so callers can fall back to their local walk.
@@ -70,7 +79,7 @@ export async function inspectStagingNatively(
   mods: Array<{ id: string; installationPath?: string }>,
 ): Promise<Map<string, NativeModStatus> | undefined> {
   const status = await nativeDeployStatus();
-  if (!status.enabled || !status.available) {
+  if (!status.enabled || !status.available || !coreSupports(status, "staging.status")) {
     return undefined;
   }
 
@@ -84,11 +93,19 @@ export async function inspectStagingNatively(
     return new Map();
   }
 
-  const result = await window.api.nativeDeploy.stagingStatus({
-    staging: stagingPath,
-    mods: queries,
-  });
-  return new Map(result.mods.map((mod) => [mod.id, mod.status]));
+  try {
+    const result = await window.api.nativeDeploy.stagingStatus({
+      staging: stagingPath,
+      mods: queries,
+    });
+    return new Map(result.mods.map((mod) => [mod.id, mod.status]));
+  } catch (err) {
+    // A stale core may predate the method; let the caller use its local walk.
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -99,10 +116,17 @@ export async function applyInstallNatively(
   request: NativeInstallRequest,
 ): Promise<NativeInstallResult | undefined> {
   const status = await nativeDeployStatus();
-  if (!status.enabled || !status.available) {
+  if (!status.enabled || !status.available || !coreSupports(status, "install.apply")) {
     return undefined;
   }
-  return window.api.nativeDeploy.installApply(request);
+  try {
+    return await window.api.nativeDeploy.installApply(request);
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 function toDeployedFile(file: NativeDeployedFile): IDeployedFile {

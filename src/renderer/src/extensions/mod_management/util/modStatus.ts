@@ -44,7 +44,11 @@ export function modStatus(
   if (mod.state === "installing") {
     return "installing";
   }
-  if (mod.installationState === "empty" || mod.installationState === "missing") {
+  if (
+    mod.installationState === "empty" ||
+    mod.installationState === "missing" ||
+    mod.installationState === "error"
+  ) {
     return "error";
   }
   if (hasDeploymentFailure(mod, failures)) {

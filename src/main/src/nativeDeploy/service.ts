@@ -33,6 +33,8 @@ const STATUS_TIMEOUT_MS = 5 * 1000;
 
 interface PingResult {
   version: string;
+  protocol?: number;
+  capabilities?: string[];
 }
 
 interface PendingRequest {
@@ -127,7 +129,14 @@ export class NativeCoreClient {
 
     try {
       const pong = await this.#request<PingResult>("ping", {}, STATUS_TIMEOUT_MS);
-      return { enabled: true, available: true, corePath, version: pong.version };
+      return {
+        enabled: true,
+        available: true,
+        corePath,
+        version: pong.version,
+        protocol: pong.protocol,
+        capabilities: pong.capabilities,
+      };
     } catch (err) {
       return {
         enabled: true,
@@ -160,17 +169,21 @@ export class NativeCoreClient {
 
   /** Stop the core process and reject anything still in flight. */
   async shutdown(): Promise<void> {
-    this.#shuttingDown = true;
     const child = this.#child;
     if (child === undefined) {
+      this.#shuttingDown = true;
       return;
     }
 
+    // Ask the core to stop before setting the guard; #request rejects once
+    // #shuttingDown is true, which used to make this a dead branch and always
+    // kill the process after the timeout instead.
     try {
       await this.#request("shutdown", {}, STATUS_TIMEOUT_MS);
     } catch {
       // The process may already be gone; terminating below is enough.
     }
+    this.#shuttingDown = true;
 
     await new Promise<void>((resolve) => {
       const done = () => resolve();

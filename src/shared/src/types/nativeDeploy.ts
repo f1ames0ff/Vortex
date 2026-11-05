@@ -103,6 +103,10 @@ export interface NativeDeployStatus {
   available: boolean;
   corePath?: string;
   version?: string;
+  /** Protocol generation; used to reject stale binaries for newer methods. */
+  protocol?: number;
+  /** Methods this core binary supports, when it reports them. */
+  capabilities?: string[];
   error?: string;
 }
 

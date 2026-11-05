@@ -350,6 +350,7 @@ void testInstallApply() {
     request.destinationPath = destination;
     request.instructions = instructions;
     request.operationId = "test-install";
+    request.journalPath = root / "success-journal.jsonl";
     const auto report = vortex::core::applyInstall(request);
 
     check(report.failures.empty(), "install should not fail");
@@ -361,6 +362,9 @@ void testInstallApply() {
     check(readFile(destination / "nested" / "b.txt") == "b", "copied content");
     check(readFile(destination / "generated.txt") == "hello", "generated content");
     check(!fs::exists(destination / "missing.txt"), "optional missing source is skipped");
+    check(readFile(root / "success-journal.jsonl").find("\"install.complete\"") !=
+              std::string::npos,
+          "successful install journal event");
 
     fs::remove_all(root);
 }
@@ -394,8 +398,72 @@ void testInstallFailuresAndJournal() {
 
     const auto journal = readFile(root / "journal.jsonl");
     check(journal.find("\"install.begin\"") != std::string::npos, "journal begin event");
-    check(journal.find("\"install.complete\"") != std::string::npos, "journal complete event");
+    check(journal.find("\"install.failed\"") != std::string::npos, "journal failed event");
     check(journal.find("\"install.failure\"") != std::string::npos, "journal failure event");
+
+    fs::remove_all(root);
+}
+
+void testInstallRejectsSymlinkEscapes() {
+#ifndef _WIN32
+    const auto root = makeRoot("install-symlink");
+    const auto temp = root / "temp";
+    const auto destination = root / "destination";
+    const auto outside = root / "outside";
+    writeFile(temp / "a.txt", "inside");
+    writeFile(outside / "secret.txt", "secret");
+    fs::create_directories(destination);
+    fs::create_symlink(outside / "secret.txt", temp / "source-link.txt");
+    fs::create_symlink(outside / "secret.txt", destination / "destination-link.txt");
+    fs::create_symlink(outside, destination / "sub");
+
+    std::vector<vortex::core::InstallInstruction> instructions;
+    instructions.push_back({vortex::core::InstallInstructionType::Copy, "source-link.txt",
+                            "from-source.txt", "", false});
+    instructions.push_back({vortex::core::InstallInstructionType::Copy, "a.txt",
+                            "destination-link.txt", "", false});
+    instructions.push_back({vortex::core::InstallInstructionType::Copy, "a.txt",
+                            "sub/escape.txt", "", false});
+
+    vortex::core::InstallRequest request;
+    request.tempPath = temp;
+    request.destinationPath = destination;
+    request.instructions = instructions;
+    request.operationId = "test-symlink";
+    const auto report = vortex::core::applyInstall(request);
+
+    check(report.failures.size() == 3, "all symlink escapes must fail");
+    check(!fs::exists(destination / "from-source.txt"), "source symlink must not be copied");
+    check(!fs::exists(outside / "escape.txt"), "destination parent symlink must not be followed");
+    check(readFile(outside / "secret.txt") == "secret", "outside file must stay untouched");
+
+    fs::remove_all(root);
+#endif
+}
+
+void testInstallDuplicateDestinations() {
+    const auto root = makeRoot("install-duplicates");
+    const auto temp = root / "temp";
+    const auto destination = root / "destination";
+    writeFile(temp / "a.txt", "a");
+
+    std::vector<vortex::core::InstallInstruction> instructions;
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Write, "", "same.txt", "first", false});
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Write, "", "same.txt", "second", false});
+    instructions.push_back(
+        {vortex::core::InstallInstructionType::Copy, "a.txt", "same.txt", "", false});
+
+    vortex::core::InstallRequest request;
+    request.tempPath = temp;
+    request.destinationPath = destination;
+    request.instructions = instructions;
+    request.operationId = "test-duplicates";
+    const auto report = vortex::core::applyInstall(request);
+
+    check(report.failures.empty(), "duplicate destinations must not race");
+    check(readFile(destination / "same.txt") == "a", "last instruction wins deterministically");
 
     fs::remove_all(root);
 }
@@ -414,6 +482,8 @@ int main() {
         testStagingStatus();
         testInstallApply();
         testInstallFailuresAndJournal();
+        testInstallRejectsSymlinkEscapes();
+        testInstallDuplicateDestinations();
         std::cout << "all core and deployment tests passed\n";
         return 0;
     } catch (const std::exception& err) {

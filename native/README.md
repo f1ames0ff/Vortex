@@ -66,10 +66,17 @@ components are rejected.
 
 `install.apply` applies the generic installer's file instructions: `mkdir`,
 `copy`, `hardlink` (falling back to copy across devices) and `write`. Sources
-are resolved inside `temp`, destinations inside `destination`, with the same
-path-traversal guard. The install journal records `install.begin`,
-`install.failure` and a durable `install.complete`. FOMOD script execution stays
-in the existing .NET host; the core only receives its resolved instructions.
+are resolved inside `temp`, destinations inside `destination`; absolute paths,
+`..`, symlinked components and (on Windows) device/ADS names are rejected.
+Hardlink/copy targets are grouped by destination, so duplicate instructions are
+applied in request order instead of racing. The install journal records a
+durable `install.begin`, per-failure `install.failure` entries, and a durable
+`install.complete` or `install.failed`. It defaults to
+`<staging>/.vortex-install-journal`. FOMOD script execution stays in the
+existing .NET host; the core only receives its resolved instructions.
+
+`ping` also returns `protocol` and `capabilities`, so the shell can reject a
+stale core before calling a method it does not support.
 
 ## Electron integration
 

@@ -1178,10 +1178,11 @@ class ModList extends ComponentEx<IProps, IComponentState> {
 
     for (const mod of installedMods) {
       const status = native.get(mod.id);
-      if (status === "ok" || status === "empty" || status === "missing") {
+      if (status === "ok" || status === "empty" || status === "missing" || status === "error") {
         applyState(mod, status);
       } else {
-        // The core saw a permission/IO error; let the local check decide.
+        // The core did not return this mod (for example because it had no
+        // installationPath); use the local check as a last resort.
         applyState(mod, await this.installationStateFor(stagingPath, mod));
       }
     }

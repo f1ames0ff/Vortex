@@ -8,7 +8,7 @@ export interface IModProps {
   downloads: { [downloadId: string]: IDownload };
 }
 
-export type ModInstallationState = "ok" | "empty" | "missing";
+export type ModInstallationState = "ok" | "empty" | "missing" | "error";
 
 /** The mod's row status, which can differ from its enabled flag when its files are gone. */
 export type ModStatus =

@@ -36,6 +36,10 @@ describe("modStatus", () => {
     expect(modStatus(mod({ installationState: "missing" }), [])).toBe("error");
   });
 
+  it("reports a staging inspection error as an error", () => {
+    expect(modStatus(mod({ installationState: "error" }), [])).toBe("error");
+  });
+
   it("reports a disabled mod with missing files as an error too, so it can be filtered", () => {
     expect(modStatus(mod({ enabled: false, installationState: "empty" }), [])).toBe("error");
   });

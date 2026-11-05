@@ -1,5 +1,7 @@
 #include "vortex/core/status.hpp"
 
+#include "vortex/core/path_safety.hpp"
+
 #include <algorithm>
 #include <atomic>
 #include <thread>
@@ -10,19 +12,6 @@ namespace fs = std::filesystem;
 namespace vortex::core {
 
 namespace {
-
-bool isSafeRelative(const fs::path& path) {
-    if (path.empty() || path.is_absolute() || path.has_root_name() ||
-        path.has_root_directory()) {
-        return false;
-    }
-    for (const auto& part : path) {
-        if (part == "..") {
-            return false;
-        }
-    }
-    return true;
-}
 
 ModStatusResult errorResult(ModStatusResult result, const std::string& message) {
     result.status = ModStatus::Error;
@@ -52,14 +41,14 @@ ModStatusResult inspectMod(const fs::path& stagingPath, const ModStatusQuery& qu
     result.installationPath = query.installationPath;
 
     const fs::path relative(query.installationPath);
-    if (!isSafeRelative(relative)) {
-        return errorResult(std::move(result),
-                           "installationPath must be a relative path inside staging");
+    std::string safetyError;
+    if (!isSafeRelative(relative, safetyError)) {
+        return errorResult(std::move(result), safetyError);
     }
 
     const auto modPath = stagingPath / relative;
     std::error_code ec;
-    const auto status = fs::status(modPath, ec);
+    const auto status = fs::symlink_status(modPath, ec);
     if (ec) {
         if (ec == std::errc::no_such_file_or_directory || ec == std::errc::not_a_directory) {
             result.status = ModStatus::Missing;
@@ -71,18 +60,26 @@ ModStatusResult inspectMod(const fs::path& stagingPath, const ModStatusQuery& qu
         result.status = ModStatus::Missing;
         return result;
     }
+    if (fs::is_symlink(status)) {
+        return errorResult(std::move(result), "installationPath is a symlink");
+    }
     if (!fs::is_directory(status)) {
         return errorResult(std::move(result), "installationPath is not a directory");
     }
 
     std::size_t entries = 0;
-    fs::directory_iterator iterator(modPath, fs::directory_options::skip_permission_denied, ec);
-    if (ec) {
-        return errorResult(std::move(result), ec.message());
-    }
-    for (const auto& entry : iterator) {
-        (void)entry;
-        ++entries;
+    try {
+        fs::directory_iterator iterator(modPath,
+                                        fs::directory_options::skip_permission_denied, ec);
+        if (ec) {
+            return errorResult(std::move(result), ec.message());
+        }
+        for (const auto& entry : iterator) {
+            (void)entry;
+            ++entries;
+        }
+    } catch (const std::exception& err) {
+        return errorResult(std::move(result), err.what());
     }
 
     result.entries = entries;
@@ -104,16 +101,35 @@ std::vector<ModStatusResult> inspectMods(const fs::path& stagingPath,
 
     std::vector<std::thread> threads;
     threads.reserve(workerCount);
-    for (std::size_t worker = 0; worker < workerCount; ++worker) {
-        threads.emplace_back([&] {
-            for (;;) {
-                const auto index = next.fetch_add(1, std::memory_order_relaxed);
-                if (index >= queries.size()) {
-                    return;
+    try {
+        for (std::size_t worker = 0; worker < workerCount; ++worker) {
+            threads.emplace_back([&] {
+                for (;;) {
+                    const auto index = next.fetch_add(1, std::memory_order_relaxed);
+                    if (index >= queries.size()) {
+                        return;
+                    }
+                    try {
+                        results[index] = inspectMod(stagingPath, queries[index]);
+                    } catch (const std::exception& err) {
+                        results[index].id = queries[index].id;
+                        results[index].installationPath = queries[index].installationPath;
+                        results[index].status = ModStatus::Error;
+                        results[index].error = err.what();
+                    } catch (...) {
+                        results[index].id = queries[index].id;
+                        results[index].installationPath = queries[index].installationPath;
+                        results[index].status = ModStatus::Error;
+                        results[index].error = "unknown error while inspecting mod";
+                    }
                 }
-                results[index] = inspectMod(stagingPath, queries[index]);
-            }
-        });
+            });
+        }
+    } catch (...) {
+        for (auto& thread : threads) {
+            thread.join();
+        }
+        throw;
     }
     for (auto& thread : threads) {
         thread.join();
