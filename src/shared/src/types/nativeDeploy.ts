@@ -405,6 +405,8 @@ export interface NativeCollectionJobMember {
   downloadId?: string;
   error?: string;
   attempts?: number;
+  /** True when the member carries a core execution task. */
+  hasTask?: boolean;
 }
 
 export interface NativeCollectionJobStatus {

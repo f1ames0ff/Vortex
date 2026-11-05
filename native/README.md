@@ -180,6 +180,9 @@ through the same state machine. Workers honour concurrency, pause/cancel,
 per-member retries (`maxRetries`) and a progress-based stall timeout, and
 advance phases only when all members are terminal. Without `collection.run`,
 renderer executors can keep using `collection.next`/`collection.member`.
+`InstallDriver` starts `collection.run` automatically when every non-ignored
+member reports `hasTask: true`; otherwise it keeps the pull-based
+`collection.next` lifecycle.
 `collection.next` returns up to the job's concurrency from the allowed phase
 and marks the selected members queued; TypeScript executors report progress
 back with `collection.member`. A phase advances only once every member is
@@ -321,11 +324,10 @@ fallback when the core is disabled or lacks a capability.
 
 Known integration gaps for the next slice:
 
-- `InstallDriver` still drives phase scheduling through `collection.next`;
-  `InstallManager` executes simple non-FOMOD collection members through
-  `collection.task`/`collection.execute`, while complex members stay in TS.
-  The all-core `collection.run` worker remains available for jobs whose
-  members all carry tasks.
+- `InstallDriver` uses `collection.run` only for jobs whose members all carry
+  tasks; current collections still attach tasks per member in `InstallManager`,
+  so phase scheduling normally stays on `collection.next`. Complex members
+  remain in TS.
 - Single-mod activation and move deployment use the core when its
   `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
   back to the TypeScript activator.

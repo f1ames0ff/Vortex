@@ -721,6 +721,7 @@ test("attaches and executes a task on a collection member", async () => {
     },
   });
   assert.equal(attached.members[0].status, "pending");
+  assert.equal(attached.members[0].hasTask, true);
 
   const executed = await client.collectionExecute({
     jobId: started.jobId,

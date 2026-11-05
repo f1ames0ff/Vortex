@@ -42,6 +42,7 @@ import {
   cancelCollectionJobNatively,
   pauseCollectionJobNatively,
   planCollectionNatively,
+  runCollectionJobNatively,
   startCollectionNatively,
   updateCollectionMemberNatively,
 } from "../../mod_management/util/nativeDeploy";
@@ -84,6 +85,14 @@ export type Step =
   | "review";
 
 export type UpdateCB = () => void;
+
+function everyMemberHasTask(status: NativeCollectionJobStatus | undefined): boolean {
+  return (
+    status !== undefined &&
+    status.members.length > 0 &&
+    status.members.every((member) => member.ignored || member.hasTask === true)
+  );
+}
 
 class InstallDriver {
   private mApi: IExtensionApi;
@@ -994,6 +1003,18 @@ class InstallDriver {
         });
         this.mNativeJobId = started?.jobId;
         this.mNativeJobStatus = started?.status;
+        if (started !== undefined && everyMemberHasTask(started.status)) {
+          const running = await runCollectionJobNatively(started.jobId).catch((err) => {
+            log("warn", "failed to start core collection workers", {
+              collectionId: collection.id,
+              error: getErrorMessageOrDefault(err),
+            });
+            return undefined;
+          });
+          if (running !== undefined) {
+            this.mNativeJobStatus = running;
+          }
+        }
       } catch (err) {
         log("warn", "failed to start native collection queue", {
           collectionId: collection.id,

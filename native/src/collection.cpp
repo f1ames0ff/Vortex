@@ -552,6 +552,8 @@ json CollectionJobs::status(const CollectionJob& job) {
             {"ignored", member.ignored},
             {"status", member.status},
             {"attempts", member.attempts},
+            {"hasTask", member.task.download.has_value() || member.task.extract.has_value() ||
+                            member.task.install.has_value()},
         };
         if (member.modId.has_value()) {
             value["modId"] = *member.modId;
