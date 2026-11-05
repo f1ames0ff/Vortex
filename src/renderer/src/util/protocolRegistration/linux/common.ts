@@ -100,6 +100,47 @@ export function getDefaultUrlSchemeHandler(protocol: string): string | undefined
 }
 
 /**
+ * Set a MIME/URL-scheme handler through `xdg-mime` instead of
+ * `xdg-settings`. On GNOME3, xdg-settings' URL-scheme setter delegates to
+ * `set_browser_mime` and therefore also claims `text/html` for the handler.
+ * That turns Vortex into the default browser as a side effect.
+ */
+export function setDefaultMimeHandler(protocol: string, desktopId: string): void {
+  const mime = `x-scheme-handler/${protocol}`;
+  const command = isFlatpak() ? "flatpak-spawn" : "xdg-mime";
+  const args = isFlatpak()
+    ? withFlatpakHostArgs(["xdg-mime", "default", desktopId, mime])
+    : ["default", desktopId, mime];
+  const fullCommand = [command, ...args].join(" ");
+  log(
+    "info",
+    isFlatpak() ? "flatpak-spawn: setting MIME handler on host" : "setting MIME handler",
+    {
+      command: fullCommand,
+    },
+  );
+  const result = runCommand(command, args);
+  if (result.error !== undefined) {
+    log("error", "linux MIME handler command failed to execute", {
+      command,
+      args,
+      fullCommand,
+      error: result.error.message,
+      code: result.error.code,
+    });
+  } else if (result.status !== 0) {
+    log("error", "linux MIME handler command returned non-zero exit code", {
+      command,
+      args,
+      fullCommand,
+      status: result.status,
+      stderr: result.stderr.trim(),
+      stdout: result.stdout.trim(),
+    });
+  }
+}
+
+/**
  * Set the desktop-id that should handle a URL scheme on Linux.
  * In Flatpak, uses flatpak-spawn to modify the host's settings.
  * ref: https://github.com/Nexus-Mods/NexusMods.App/blob/main/src/NexusMods.Backend/RuntimeDependency/XDGSettingsDependency.cs#L22-L34

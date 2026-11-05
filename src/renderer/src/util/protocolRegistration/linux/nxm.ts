@@ -20,7 +20,7 @@ import {
   applicationsDirectory,
   getDefaultUrlSchemeHandler,
   refreshDesktopDatabase,
-  setDefaultUrlSchemeHandler,
+  setDefaultMimeHandler,
 } from "./common";
 import { escapeDesktopExecFilePath, escapeDesktopFilePath } from "./desktopFileEscaping";
 
@@ -72,7 +72,7 @@ export function registerLinuxNxmProtocolHandler(
 
   const previousHandler = getDefaultUrlSchemeHandler(NXM_PROTOCOL);
   const haveToRegister = previousHandler !== desktopId;
-  setDefaultUrlSchemeHandler(NXM_PROTOCOL, desktopId);
+  setDefaultMimeHandler(NXM_PROTOCOL, desktopId);
 
   return haveToRegister;
 }
