@@ -202,7 +202,14 @@ import { InstallPhaseTracker, type IDeploymentDetails } from "./util/InstallPhas
 import { isFuzzyVersion } from "./util/isFuzzyVersion";
 import metaLookupMatch from "./util/metaLookupMatch";
 import modName, { renderModReference } from "./util/modName";
-import { applyInstallNatively, extractArchiveNatively } from "./util/nativeDeploy";
+import {
+  applyInstallNatively,
+  cancelCollectionJobNatively,
+  extractArchiveNatively,
+  nextCollectionMembersNatively,
+  startCollectionNatively,
+  updateCollectionMemberNatively,
+} from "./util/nativeDeploy";
 import queryGameId from "./util/queryGameId";
 import { reconcileOrphanedArchive } from "./util/reconcileOrphanedArchive";
 import { selectRequeueCandidates } from "./util/requeueCandidates";
@@ -2344,6 +2351,12 @@ class InstallManager {
    * Clean up pending and active installations for a specific source mod
    */
   private cleanupPendingInstalls(sourceModId: string, hard: boolean = false): void {
+    const jobId = this.mNativeCollectionJobs.get(sourceModId);
+    if (jobId !== undefined) {
+      this.mNativeCollectionJobs.delete(sourceModId);
+      void cancelCollectionJobNatively(jobId).catch(() => undefined);
+    }
+
     // Clean up pending installs
     const pendingKeysToRemove = Array.from(this.mPendingInstalls.keys()).filter((key) =>
       key.includes(sourceModId),
@@ -2436,16 +2449,33 @@ class InstallManager {
 
     const downloads = api.getState().persistent.downloads.files;
     const download = downloads[downloadId];
+    const nativeJobId = this.mNativeCollectionJobs.get(sourceModId);
+    const nativeRuleId =
+      dep.sessionRuleId ??
+      `${recommended ? "recommends" : "requires"}_${referenceId(dep.reference) ?? "undefined"}`;
+    if (nativeJobId !== undefined) {
+      void updateCollectionMemberNatively(
+        nativeJobId,
+        nativeRuleId,
+        download?.state === "finished" ? "downloaded" : "downloading",
+        { downloadId },
+      ).catch(() => undefined);
+    }
     const canStartNow = canStartTasks ? phaseNum <= phaseState.allowedPhase : false;
 
-    // Don't start installations if deployment is in progress
-    const canStartWithoutDeploymentBlock = canStartNow && !phaseState.isDeploying;
+    // With a core job, all installs go through the native phase scheduler;
+    // otherwise preserve the local immediate-start path.
+    const canStartWithoutDeploymentBlock =
+      nativeJobId === undefined && canStartNow && !phaseState.isDeploying;
 
     if (canStartWithoutDeploymentBlock && download?.state === "finished" && download?.size > 0) {
       startTask();
     } else {
       if (this.mPendingInstalls.has(installKey)) {
         return;
+      }
+      if (nativeJobId !== undefined) {
+        this.mPendingTaskRule.set(startTask, nativeRuleId);
       }
       this.mPendingInstalls.set(installKey, dep);
       const pending = phaseState.pendingByPhase.get(phaseNum) ?? [];
@@ -2801,6 +2831,10 @@ class InstallManager {
   // in InstallPhaseTracker; the orchestration below reaches each collection's entry via
   // ensure()/get() and drives the sentinel-safe backfill through markPhasesBeforeFinished().
   private mPhaseTracker = new InstallPhaseTracker();
+  // Collection scheduler jobs owned by the core, keyed by the collection mod id.
+  private mNativeCollectionJobs = new Map<string, string>();
+  // Pending start callbacks mapped to the session rule id the core queue knows.
+  private mPendingTaskRule = new WeakMap<() => void, string>();
 
   // Optional (recommends) members whose download the completion poll has already kicked off this
   // session, keyed by rule id. Guards driveSelectedOptionals against re-triggering the same
@@ -3604,18 +3638,65 @@ class InstallManager {
 
   private startPendingForPhase(sourceModId: string, phase: number) {
     const phaseState = this.mPhaseTracker.get(sourceModId);
-    if (!phaseState) {
-      // Phase state was cleaned up, nothing to start
+    if (!phaseState || phaseState.isDeploying) {
+      // Phase state was cleaned up or deployment is in progress
+      return;
+    }
+    if (!this.canStartInstallationTasks(sourceModId)) {
       return;
     }
 
-    const tasks = phaseState.pendingByPhase.get(phase) ?? [];
-    if (tasks.length === 0 || !this.canStartInstallationTasks(sourceModId)) {
+    const jobId = this.mNativeCollectionJobs.get(sourceModId);
+    if (jobId !== undefined) {
+      void this.startPendingForPhaseNatively(sourceModId, phase, jobId);
       return;
     }
-    // Drain queue for this phase
+    this.drainPendingPhase(sourceModId, phase);
+  }
+
+  private drainPendingPhase(sourceModId: string, phase: number) {
+    const phaseState = this.mPhaseTracker.get(sourceModId);
+    if (!phaseState) {
+      return;
+    }
+    const tasks = phaseState.pendingByPhase.get(phase) ?? [];
+    if (tasks.length === 0) {
+      return;
+    }
     phaseState.pendingByPhase.set(phase, []);
     tasks.forEach((run) => run());
+  }
+
+  private async startPendingForPhaseNatively(
+    sourceModId: string,
+    phase: number,
+    jobId: string,
+  ): Promise<void> {
+    const next = await nextCollectionMembersNatively(jobId).catch(() => undefined);
+    if (next === undefined) {
+      this.drainPendingPhase(sourceModId, phase);
+      return;
+    }
+
+    const phaseState = this.mPhaseTracker.get(sourceModId);
+    if (!phaseState) {
+      return;
+    }
+    const selected = new Set(next.members.map((member) => member.ruleId));
+    const runs: Array<() => void> = [];
+    for (const [pendingPhase, tasks] of phaseState.pendingByPhase) {
+      const keep: Array<() => void> = [];
+      for (const run of tasks) {
+        const ruleId = this.mPendingTaskRule.get(run);
+        if (ruleId !== undefined && selected.has(ruleId)) {
+          runs.push(run);
+        } else {
+          keep.push(run);
+        }
+      }
+      phaseState.pendingByPhase.set(pendingPhase, keep);
+    }
+    runs.forEach((run) => run());
   }
 
   private canStartInstallationTasks(sourceModId: string, allowOptional?: boolean): boolean {
@@ -6754,6 +6835,46 @@ class InstallManager {
 
     dependencies.forEach((dep) => setdefault(phases, dep.phase ?? 0, []).push(dep));
 
+    if (!recommended && dependencies.length > 0) {
+      const previousJob = this.mNativeCollectionJobs.get(sourceModId);
+      if (previousJob !== undefined) {
+        this.mNativeCollectionJobs.delete(sourceModId);
+        void cancelCollectionJobNatively(previousJob).catch(() => undefined);
+      }
+      const nativeMembers = dependencies.map((dep, index) => {
+        let status = "pending";
+        if (dep.mod !== undefined) {
+          status = "installed";
+        } else if (dep.download !== undefined && downloads[dep.download] !== undefined) {
+          const downloadState = downloads[dep.download].state;
+          status =
+            downloadState === "finished"
+              ? "downloaded"
+              : downloadState === "failed"
+                ? "failed"
+                : downloadState === "paused"
+                  ? "pending"
+                  : "downloading";
+        }
+        return {
+          ruleIndex: index,
+          ruleId: dep.sessionRuleId ?? `requires_${referenceId(dep.reference) ?? "undefined"}`,
+          type: "requires",
+          phase: dep.phase ?? 0,
+          ignored: false,
+          status,
+          modId: dep.mod?.id,
+          downloadId: dep.download,
+        };
+      });
+      const started = await startCollectionNatively(sourceModId, gameId, nativeMembers, {
+        concurrency: 5,
+      }).catch(() => undefined);
+      if (started !== undefined) {
+        this.mNativeCollectionJobs.set(sourceModId, started.jobId);
+      }
+    }
+
     // Initialize phase state immediately after determining what phases we have
     if (dependencies.length > 0) {
       this.mPhaseTracker.ensure(sourceModId);
@@ -6872,6 +6993,11 @@ class InstallManager {
       await this.pollAllPhasesComplete(api, sourceModId);
     } finally {
       this.mPhaseTracker.delete(sourceModId);
+      const jobId = this.mNativeCollectionJobs.get(sourceModId);
+      if (jobId !== undefined) {
+        this.mNativeCollectionJobs.delete(sourceModId);
+        void cancelCollectionJobNatively(jobId).catch(() => undefined);
+      }
     }
 
     return res;
@@ -7830,6 +7956,15 @@ class InstallManager {
         ? markModInstalled(plan.sessionId, plan.ruleId, plan.write.modId)
         : updateModStatus(plan.sessionId, plan.ruleId, plan.write.status);
     this.mApi.store.dispatch(action);
+
+    const nativeJobId =
+      sourceModId !== undefined ? this.mNativeCollectionJobs.get(sourceModId) : undefined;
+    if (nativeJobId !== undefined) {
+      const status = plan.write.kind === "markInstalled" ? "installed" : plan.write.status;
+      void updateCollectionMemberNatively(nativeJobId, plan.ruleId, status, {
+        modId: plan.write.kind === "markInstalled" ? plan.write.modId : undefined,
+      }).catch(() => undefined);
+    }
   }
 
   /**

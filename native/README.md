@@ -206,8 +206,11 @@ Collection resolution is also moving across: `gatherDependencies` asks
 `deps.resolve` for the top-level rule matches before its metadata lookups, and
 `InstallDriver` uses `collection.plan` to compute the missing-member set, then
 starts a `collection.start` phase queue and reports installed members back to
-it. Both keep the existing TypeScript resolver as the fallback when the flag is
-off or the core lacks the capability.
+it. `InstallManager` creates the required-phase job as well: downloaded
+dependencies are reported as `downloaded`, `collection.next` selects the work
+that may start, and completion/failure/ignore statuses flow back through
+`collection.member`. The TypeScript phase tracker remains the fallback, and the
+actual download/install executor is still TypeScript.
 
 The gamebryo plugin manager sends its Data-folder and enabled-mod directory
 scans to `plugins.scan`; `PluginPersistor` reads and writes the order files
