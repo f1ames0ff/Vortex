@@ -158,6 +158,23 @@ Known integration gaps for the next slice:
   `ignoreDeploy` still rely on the TypeScript path.
 - The packaged app does not embed a Windows build of the core yet.
 
+## Packaging
+
+The release core is built and staged into the packaged app automatically:
+
+```sh
+pnpm native:build          # cmake --preset release + build
+pnpm package:nosign
+pnpm verify:packaged-native
+```
+
+`prepare-dist-package.mjs` copies `native/build/release/vortex-core[.exe]`
+into `src/main/dist/temp/native`, and electron-builder's `extraResources`
+places it at `resources/native/vortex-core[.exe]` in the packaged app. That is
+the path `resolveDefaultCorePath` probes. Set `VORTEX_SKIP_NATIVE_CORE=1` only
+for a deliberate TypeScript-only package; normal packaging fails if the core
+is missing.
+
 ## First slice
 
 - Manifest read/write in the existing Vortex JSON format.

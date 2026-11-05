@@ -10,6 +10,11 @@
   "win": {
     "target": "nsis",
     "icon": "nsis/icon.ico",
+    "extraResources": [
+      "./temp/VC_redist.x64.exe",
+      "./temp/windowsdesktop-runtime-win-x64.exe",
+      "./nsis/**/*"
+    ],
     "publish": [
       {
         "provider": "github",
@@ -45,9 +50,10 @@
     "mimeTypes": ["x-scheme-handler/nxm"]
   },
   "extraResources": [
-    "./temp/VC_redist.x64.exe",
-    "./temp/windowsdesktop-runtime-win-x64.exe",
-    "./nsis/**/*",
+    {
+      "from": "./temp/native",
+      "to": "native"
+    },
     {
       "from": "../../../locales",
       "to": "locales"

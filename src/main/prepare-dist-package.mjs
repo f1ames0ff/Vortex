@@ -1,5 +1,5 @@
 import { createWriteStream, existsSync } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -48,6 +48,35 @@ async function downloadFile(url, dest) {
   await pipeline(Readable.fromWeb(response.body), createWriteStream(dest));
 }
 
+// Stage the C++ core next to the packaged app. electron-builder copies
+// `temp/native` to `resources/native`, which is where resolveDefaultCorePath
+// looks for `vortex-core[.exe]`.
+async function prepareNativeCore() {
+  if (process.env.VORTEX_SKIP_NATIVE_CORE === "1") {
+    console.warn("skipping native core staging (VORTEX_SKIP_NATIVE_CORE=1)");
+    return;
+  }
+
+  const nativeRoot = dirname(findUp("native/CMakeLists.txt", MAIN_DIR));
+  const binaryName = process.platform === "win32" ? "vortex-core.exe" : "vortex-core";
+  const source = resolve(nativeRoot, "build", "release", binaryName);
+  if (!existsSync(source)) {
+    throw new Error(
+      `missing native core: ${source}\n` +
+        "Build it with `pnpm native:build` before packaging, or set " +
+        "VORTEX_SKIP_NATIVE_CORE=1 to package without it.",
+    );
+  }
+
+  const staged = resolve(MAIN_DIR, "temp", "native", binaryName);
+  await mkdir(dirname(staged), { recursive: true });
+  await copyFile(source, staged);
+  if (process.platform !== "win32") {
+    await chmod(staged, 0o755);
+  }
+  console.log(`staged native core: ${staged}`);
+}
+
 async function prepareWin() {
   // assert that loot runtime assets exist; fail the build if they don't.
   const lootRelease = resolve(DIST_DIR, "assets", "loot", "build", "Release");
@@ -81,6 +110,8 @@ async function main() {
   );
 
   await writeFile(DIST_PACKAGE_PATH, JSON.stringify(mainPkg, null, 2) + "\n", "utf8");
+
+  await prepareNativeCore();
 
   if (process.platform === "win32") {
     await prepareWin();
