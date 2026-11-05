@@ -68,6 +68,7 @@ Supported requests:
 {"id":22,"method":"collection.status","params":{"jobId":"collection_..."}}
 {"id":23,"method":"collection.pause","params":{"jobId":"collection_..."}}
 {"id":24,"method":"collection.cancel","params":{"jobId":"collection_..."}}
+{"id":24,"method":"collection.run","params":{"jobId":"collection_..."}}
 {"id":25,"method":"download.add","params":{"directory":"/downloads","fileName":"ModA.7z","urls":["https://example.com/ModA.7z"],"maxRetries":3}}
 {"id":26,"method":"download.status","params":{"id":"download_..."}}
 {"id":27,"method":"download.pause","params":{"id":"download_..."}}
@@ -143,7 +144,28 @@ The matcher covers the common semver range forms (`^`, `~`, comparators,
 wildcards, `||`); hyphen ranges and full minimatch character classes are not
 implemented yet.
 
-`collection.start` turns a plan into a core-owned phase queue.
+`collection.start` turns a plan into a core-owned phase queue. Members may
+carry an execution `task`:
+
+```json
+{
+    "download": { "directory": "/downloads", "fileName": "ModA.7z", "urls": ["https://..."] },
+    "extract": { "destination": "/temp/ModA", "sevenZip": "/usr/bin/7z" },
+    "install": {
+        "temp": "/temp/ModA",
+        "destination": "/staging/ModA",
+        "instructions": [{ "type": "copy", "source": "a.txt", "destination": "a.txt" }]
+    },
+    "modId": "ModA"
+}
+```
+
+`collection.run` starts core workers that repeatedly take members from
+`collection.next`, execute download → extract → install, and report back
+through the same state machine. Workers honour concurrency, pause/cancel,
+per-member retries (`maxRetries`) and a progress-based stall timeout, and
+advance phases only when all members are terminal. Without `collection.run`,
+renderer executors can keep using `collection.next`/`collection.member`.
 `collection.next` returns up to the job's concurrency from the allowed phase
 and marks the selected members queued; TypeScript executors report progress
 back with `collection.member`. A phase advances only once every member is
@@ -271,6 +293,9 @@ fallback when the core is disabled or lacks a capability.
 
 Known integration gaps for the next slice:
 
+- `InstallDriver` still drives members through `collection.next`; the
+  `collection.run` core worker is available for members that carry a task and
+  will replace that executor incrementally.
 - Single-mod activation and move deployment use the core when its
   `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
   back to the TypeScript activator.

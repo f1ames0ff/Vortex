@@ -810,11 +810,11 @@ void testCollectionJobQueue() {
     job.gameId = "skyrimse";
     job.concurrency = 1;
     job.members = {
-        {0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0},
-        {1, "requires_b", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0},
-        {2, "requires_c", "requires", 2, false, "pending", std::nullopt, std::nullopt, "", 0},
-        {3, "recommends_d", "recommends", 666, false, "pending", std::nullopt, std::nullopt, "", 0},
-        {4, "requires_ignored", "requires", 1, true, "ignored", std::nullopt, std::nullopt, "", 0},
+        {0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
+        {1, "requires_b", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
+        {2, "requires_c", "requires", 2, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
+        {3, "recommends_d", "recommends", 666, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
+        {4, "requires_ignored", "requires", 1, true, "ignored", std::nullopt, std::nullopt, "", 0, {}},
     };
 
     vortex::core::CollectionJobs jobs;
@@ -856,7 +856,7 @@ void testCollectionJobRetryAndStall() {
     job.concurrency = 1;
     job.maxRetries = 2;
     job.stallMs = 0;
-    job.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0}};
+    job.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}}};
     vortex::core::CollectionJobs jobs;
     const auto id = jobs.start(job);
 
@@ -875,11 +875,137 @@ void testCollectionJobRetryAndStall() {
     // A fresh job with no progress is reported as stalled once the threshold passes.
     vortex::core::CollectionJob stalled;
     stalled.stallMs = 0;
-    stalled.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0}};
+    stalled.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}}};
     const auto stalledId = jobs.start(stalled);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     const auto stalledStatus = vortex::core::CollectionJobs::status(*jobs.find(stalledId));
     check(stalledStatus["stalled"].get<bool>(), "stalled job reported");
+}
+
+void testCollectionRun() {
+#ifdef VORTEX_7Z_PATH
+    const auto root = makeRoot("collection-run");
+    const auto source = root / "archive-source";
+    const auto archive = root / "task.zip";
+    const auto temp = root / "extracted";
+    const auto destination = root / "staging" / "ModA";
+    writeFile(source / "a.txt", "collection-content");
+
+    const auto previous = fs::current_path();
+    fs::current_path(source);
+    vortex::core::ProcessResult created;
+    try {
+        created = vortex::core::runProcess(
+            fs::path(VORTEX_7Z_PATH), {"a", "-tzip", archive.string(), "a.txt"});
+    } catch (...) {
+        fs::current_path(previous);
+        throw;
+    }
+    fs::current_path(previous);
+    check(created.exitCode == 0, "create collection task archive");
+
+    vortex::core::CollectionJob job;
+    job.concurrency = 1;
+    job.maxRetries = 1;
+    job.members.resize(1);
+    auto& member = job.members[0];
+    member.ruleIndex = 0;
+    member.ruleId = "requires_a";
+    member.type = "requires";
+    member.phase = 1;
+    member.status = "pending";
+
+    vortex::core::CollectionExtractTask extract;
+    extract.archive = archive;
+    extract.destination = temp;
+    extract.sevenZip = fs::path(VORTEX_7Z_PATH);
+    member.task.extract = extract;
+
+    vortex::core::InstallRequest install;
+    install.tempPath = temp;
+    install.destinationPath = destination;
+    install.instructions.push_back(
+        {vortex::core::InstallInstructionType::Copy, "a.txt", "a.txt", "", false});
+    member.task.install = install;
+    member.task.modId = "ModA";
+
+    vortex::core::DownloadQueue downloads;
+    vortex::core::CollectionJobs jobs;
+    const auto id = jobs.start(job);
+    jobs.run(id, downloads);
+
+    vortex::core::CollectionJob snapshot;
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+        check(jobs.copy(id, snapshot), "collection run job exists");
+        if (std::all_of(snapshot.members.begin(), snapshot.members.end(),
+                        [](const auto& entry) {
+                            return vortex::core::collectionMemberTerminal(entry.status);
+                        })) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    check(snapshot.members.size() == 1, "collection run member count");
+    check(snapshot.members[0].status == "installed", "collection run installed member");
+    check(snapshot.members[0].modId == "ModA", "collection run mod id");
+    check(readFile(destination / "a.txt") == "collection-content",
+          "collection run extracted and installed the file");
+    const auto status = vortex::core::CollectionJobs::status(snapshot);
+    check(status["complete"].get<bool>(), "collection run completes");
+
+    fs::remove_all(root);
+#endif
+}
+
+void testCollectionRunRetries() {
+    const auto root = makeRoot("collection-retries");
+    const auto destination = root / "staging" / "ModA";
+    fs::create_directories(destination);
+
+    vortex::core::CollectionJob job;
+    job.concurrency = 1;
+    job.maxRetries = 2;
+    job.members.resize(1);
+    auto& member = job.members[0];
+    member.ruleIndex = 0;
+    member.ruleId = "requires_missing";
+    member.type = "requires";
+    member.phase = 1;
+    member.status = "pending";
+    vortex::core::InstallRequest install;
+    install.tempPath = root / "empty";
+    install.destinationPath = destination;
+    install.instructions.push_back(
+        {vortex::core::InstallInstructionType::Copy, "missing.txt", "missing.txt", "", false});
+    member.task.install = install;
+
+    vortex::core::DownloadQueue downloads;
+    vortex::core::CollectionJobs jobs;
+    const auto id = jobs.start(job);
+    jobs.run(id, downloads);
+
+    vortex::core::CollectionJob snapshot;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+        check(jobs.copy(id, snapshot), "retry job exists");
+        if (std::all_of(snapshot.members.begin(), snapshot.members.end(),
+                        [](const auto& entry) {
+                            return vortex::core::collectionMemberTerminal(entry.status);
+                        })) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
+    check(snapshot.members[0].status == "failed", "collection retry ends failed");
+    check(snapshot.members[0].attempts == 2, "collection retry honours maxRetries");
+    check(vortex::core::CollectionJobs::status(snapshot)["complete"].get<bool>(),
+          "failed collection is complete");
+
+    fs::remove_all(root);
 }
 
 void testDownloadValidation() {
@@ -1346,6 +1472,8 @@ int main() {
         testPluginOrderCasingAndWrite();
         testCollectionJobQueue();
         testCollectionJobRetryAndStall();
+        testCollectionRun();
+        testCollectionRunRetries();
         testDownloadValidation();
         testTomlParsing();
         testGameDescriptorParsing();

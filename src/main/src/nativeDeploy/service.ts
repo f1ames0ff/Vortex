@@ -256,6 +256,10 @@ export class NativeCoreClient {
     return this.#request("collection.cancel", { jobId });
   }
 
+  collectionRun(jobId: string): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.run", { jobId });
+  }
+
   downloadAdd(request: NativeDownloadRequest): Promise<NativeDownloadStatus> {
     return this.#request("download.add", request);
   }

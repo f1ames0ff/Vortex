@@ -455,6 +455,7 @@ export interface InvokeChannels {
   ) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionPause": (jobId: string) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionCancel": (jobId: string) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionRun": (jobId: string) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:downloadAdd": (request: NativeDownloadRequest) => Promise<NativeDownloadStatus>;
   "nativeDeploy:downloadStatus": (id: string) => Promise<NativeDownloadStatus>;
   "nativeDeploy:downloadList": () => Promise<NativeDownloadListResult>;

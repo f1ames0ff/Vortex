@@ -698,6 +698,9 @@ export interface NativeDeployApi {
   /** Cancels a collection job. */
   collectionCancel(jobId: string): Promise<NativeCollectionJobStatus>;
 
+  /** Starts core-driven workers for members that carry execution tasks. */
+  collectionRun(jobId: string): Promise<NativeCollectionJobStatus>;
+
   /** Adds a download to the core-owned queue. */
   downloadAdd(request: NativeDownloadRequest): Promise<NativeDownloadStatus>;
 

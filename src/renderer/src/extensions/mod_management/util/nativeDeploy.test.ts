@@ -50,6 +50,7 @@ import {
   readPluginOrderNatively,
   resetNativeDeployStatus,
   resolveDependenciesNatively,
+  runCollectionJobNatively,
   scanPluginsNatively,
   startCollectionNatively,
   updateCollectionMemberNatively,
@@ -79,6 +80,7 @@ interface FakeNativeDeploy {
   collectionMember: ReturnType<typeof vi.fn>;
   collectionPause: ReturnType<typeof vi.fn>;
   collectionCancel: ReturnType<typeof vi.fn>;
+  collectionRun: ReturnType<typeof vi.fn>;
   downloadAdd: ReturnType<typeof vi.fn>;
   downloadStatus: ReturnType<typeof vi.fn>;
   downloadList: ReturnType<typeof vi.fn>;
@@ -130,6 +132,7 @@ beforeEach(() => {
     collectionMember: vi.fn(),
     collectionPause: vi.fn(),
     collectionCancel: vi.fn(),
+    collectionRun: vi.fn(),
     downloadAdd: vi.fn(),
     downloadStatus: vi.fn(),
     downloadList: vi.fn(),
@@ -748,6 +751,7 @@ describe("native staging adapter", () => {
     await collectionStatusNatively("job-1");
     await pauseCollectionJobNatively("job-1");
     await cancelCollectionJobNatively("job-1");
+    await runCollectionJobNatively("job-1");
 
     expect(nativeDeploy.collectionStart).toHaveBeenCalledWith({
       collectionId: "collection",
@@ -764,6 +768,7 @@ describe("native staging adapter", () => {
         },
       ],
     });
+    expect(nativeDeploy.collectionRun).toHaveBeenCalledWith("job-1");
     expect(nativeDeploy.collectionMember).toHaveBeenCalledWith({
       jobId: "job-1",
       ruleId: "requires_a",

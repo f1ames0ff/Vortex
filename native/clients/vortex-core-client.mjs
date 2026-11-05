@@ -129,6 +129,10 @@ export class VortexCoreClient {
     return this.request("collection.cancel", { jobId });
   }
 
+  collectionRun(jobId) {
+    return this.request("collection.run", { jobId });
+  }
+
   downloadAdd(request) {
     return this.request("download.add", request);
   }

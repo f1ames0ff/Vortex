@@ -606,3 +606,76 @@ test("detects external changes from a manifest", async () => {
   result = await client.externalChanges(baseRequest);
   assert.equal(result.changes[0].changeType, "deleted");
 });
+
+test("executes a collection member through core workers", async () => {
+  const work = join(root, "collection-run");
+  const source = join(work, "source");
+  const downloadsDir = join(work, "downloads");
+  const temp = join(work, "temp");
+  const destination = join(work, "staging", "ModA");
+  mkdirSync(source, { recursive: true });
+  mkdirSync(downloadsDir, { recursive: true });
+  writeFileSync(join(source, "a.txt"), "worker-content");
+  const archive = join(work, "task.zip");
+  execFileSync(sevenZip, ["a", "-tzip", archive, "a.txt"], { cwd: source, stdio: "ignore" });
+  const payload = readFileSync(archive);
+
+  const server = createServer((request, response) => {
+    response.writeHead(200, { "content-length": payload.length });
+    response.end(payload);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${server.address().port}/task.zip`;
+
+  try {
+    const started = await client.collectionStart({
+      collectionId: "collection",
+      gameId: "skyrimse",
+      concurrency: 1,
+      maxRetries: 0,
+      members: [
+        {
+          ruleIndex: 0,
+          ruleId: "requires_a",
+          type: "requires",
+          phase: 1,
+          ignored: false,
+          status: "pending",
+          task: {
+            modId: "ModA",
+            download: {
+              directory: downloadsDir,
+              fileName: "task.zip",
+              urls: [url],
+              curl: process.env.VORTEX_CURL_PATH ?? "curl",
+              maxRetries: 0,
+            },
+            extract: { destination: temp, sevenZip },
+            install: {
+              temp,
+              destination,
+              instructions: [{ type: "copy", source: "a.txt", destination: "a.txt" }],
+            },
+          },
+        },
+      ],
+    });
+    assert.ok(started.jobId);
+
+    await client.collectionRun(started.jobId);
+    const deadline = Date.now() + 15000;
+    let status = await client.collectionStatus(started.jobId);
+    while (!status.complete && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      status = await client.collectionStatus(started.jobId);
+    }
+
+    assert.equal(status.complete, true);
+    assert.equal(status.members[0].status, "installed", status.members[0].error);
+    assert.equal(status.members[0].modId, "ModA");
+    assert.equal(status.counts.installed, 1);
+    assert.equal(readFileSync(join(destination, "a.txt"), "utf8"), "worker-content");
+  } finally {
+    server.close();
+  }
+});

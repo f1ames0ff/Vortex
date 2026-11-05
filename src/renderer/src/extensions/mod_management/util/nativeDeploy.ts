@@ -408,6 +408,17 @@ export async function cancelCollectionJobNatively(
   return window.api.nativeDeploy.collectionCancel(jobId);
 }
 
+/** Start core workers for a collection job whose members carry tasks. */
+export async function runCollectionJobNatively(
+  jobId: string,
+): Promise<NativeCollectionJobStatus | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.run")) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.collectionRun(jobId);
+}
+
 /**
  * Download a direct HTTP(S) URL through the core queue and wait for it to
  * settle. Returns the final path, or `undefined` when the native path is

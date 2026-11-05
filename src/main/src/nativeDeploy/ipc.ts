@@ -156,6 +156,10 @@ export function initNativeDeployIpc(): void {
     nativeCoreClient().collectionCancel(jobId),
   );
 
+  betterIpcMain.handle("nativeDeploy:collectionRun", (_event, jobId: string) =>
+    nativeCoreClient().collectionRun(jobId),
+  );
+
   betterIpcMain.handle("nativeDeploy:downloadAdd", (_event, request: NativeDownloadRequest) =>
     nativeCoreClient().downloadAdd({
       curl: process.env.VORTEX_CURL_PATH ?? "curl",
