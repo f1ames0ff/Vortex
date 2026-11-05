@@ -11,6 +11,7 @@ import type {
   NativeDeployRequest,
   NativeDeployStatus,
   NativeDeployedFile,
+  NativeHashAlgorithm,
   NativeInstallRequest,
   NativeInstallResult,
   NativeModStatus,
@@ -133,6 +134,61 @@ export async function applyInstallNatively(
   }
   try {
     return await window.api.nativeDeploy.installApply(request);
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/** Hash a batch of files in the core, returning path -> digest. */
+export async function hashFilesNatively(
+  files: string[],
+  algorithm: NativeHashAlgorithm,
+): Promise<Map<string, string> | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "hash.files")) {
+    return undefined;
+  }
+
+  try {
+    const result = await window.api.nativeDeploy.hashFiles({ files, algorithm });
+    return new Map(result.results.map((entry) => [entry.path, entry.hash]));
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Extract an archive through the core. Returns `undefined` when the native
+ * path is disabled, the archive is encrypted (the renderer prompts for a
+ * password), or listing failed, so the caller can use its existing path.
+ */
+export async function extractArchiveNatively(
+  archive: string,
+  destination: string,
+): Promise<{ code: number; errors: string[] } | undefined> {
+  const status = await nativeDeployStatus();
+  if (
+    !status.enabled ||
+    !status.available ||
+    !coreSupports(status, "archive.list") ||
+    !coreSupports(status, "archive.extract")
+  ) {
+    return undefined;
+  }
+
+  try {
+    const listing = await window.api.nativeDeploy.archiveList({ archive });
+    if (listing.code !== 0 || listing.encrypted) {
+      return undefined;
+    }
+    const result = await window.api.nativeDeploy.archiveExtract({ archive, destination });
+    return { code: result.code, errors: result.errors };
   } catch (err) {
     if (isUnknownMethod(err)) {
       return undefined;

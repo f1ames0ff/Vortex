@@ -4,11 +4,15 @@
 #include "vortex/deployment/manifest.hpp"
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
+#include "vortex/core/archive.hpp"
+#include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
+#include "vortex/core/process.hpp"
 #include "vortex/core/status.hpp"
 #include "vortex/game/descriptor.hpp"
 #include "vortex/game/toml.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -455,6 +459,80 @@ void testInstallRejectsSymlinkEscapes() {
 #endif
 }
 
+void testHashVectors() {
+    const auto root = makeRoot("hash");
+    const auto empty = root / "empty.txt";
+    const auto hello = root / "hello.txt";
+    writeFile(empty, "");
+    writeFile(hello, "hello");
+
+    const auto md5 = vortex::core::hashFiles({empty.string(), hello.string()},
+                                             vortex::core::HashAlgorithm::Md5);
+    check(md5.failures.empty(), "md5 should not fail");
+    check(md5.results[0].hash == "d41d8cd98f00b204e9800998ecf8427e", "md5 empty vector");
+    check(md5.results[1].hash == "5d41402abc4b2a76b9719d911017c592", "md5 hello vector");
+    check(md5.results[1].bytes == 5, "md5 byte count");
+
+    const auto xxh = vortex::core::hashFiles({empty.string(), hello.string()},
+                                             vortex::core::HashAlgorithm::Xxh64);
+    check(xxh.failures.empty(), "xxh64 should not fail");
+    check(xxh.results[0].hash == "70bbN1HY6Zk=", "xxh64 empty vector");
+    check(xxh.results[1].hash == "JseCfYifbaM=", "xxh64 hello vector");
+
+    const auto missing = vortex::core::hashFiles({(root / "missing.txt").string()},
+                                                 vortex::core::HashAlgorithm::Md5);
+    check(missing.failures.size() == 1, "missing hash failure");
+
+    fs::remove_all(root);
+}
+
+void testArchiveListAndExtract() {
+#ifdef VORTEX_7Z_PATH
+    const auto root = makeRoot("archive");
+    const auto source = root / "source";
+    const auto archive = root / "sample.zip";
+    writeFile(source / "a.txt", "hello");
+    writeFile(source / "nested" / "b.txt", "world!");
+
+    const auto previous = fs::current_path();
+    fs::current_path(source);
+    vortex::core::ProcessResult created;
+    try {
+        created = vortex::core::runProcess(
+            fs::path(VORTEX_7Z_PATH),
+            {"a", "-tzip", archive.string(), "a.txt", "nested/b.txt"});
+    } catch (...) {
+        fs::current_path(previous);
+        throw;
+    }
+    fs::current_path(previous);
+    check(created.exitCode == 0, "create archive");
+
+    const auto listing =
+        vortex::core::listArchive(archive, fs::path(VORTEX_7Z_PATH));
+    check(listing.code == 0, "list archive");
+    check(listing.errors.empty(), "list archive errors");
+    const auto hasEntry = [&](const std::string& path) {
+        return std::any_of(listing.entries.begin(), listing.entries.end(),
+                           [&](const vortex::core::ArchiveEntry& entry) {
+                               return entry.path == path;
+                           });
+    };
+    check(hasEntry("a.txt"), "archive lists a.txt");
+    check(hasEntry("nested/b.txt"), "archive lists nested/b.txt");
+
+    const auto destination = root / "out";
+    const auto extraction =
+        vortex::core::extractArchive(archive, destination, fs::path(VORTEX_7Z_PATH));
+    check(extraction.code == 0, "extract archive");
+    check(extraction.errors.empty(), "extract archive errors");
+    check(readFile(destination / "a.txt") == "hello", "extracted a.txt");
+    check(readFile(destination / "nested" / "b.txt") == "world!", "extracted nested/b.txt");
+
+    fs::remove_all(root);
+#endif
+}
+
 void testInstallDuplicateDestinations() {
     const auto root = makeRoot("install-duplicates");
     const auto temp = root / "temp";
@@ -680,6 +758,8 @@ int main() {
         testInstallFailuresAndJournal();
         testInstallRejectsSymlinkEscapes();
         testInstallDuplicateDestinations();
+        testHashVectors();
+        testArchiveListAndExtract();
         testTomlParsing();
         testGameDescriptorParsing();
         testMalformedToml();

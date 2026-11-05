@@ -14,10 +14,16 @@ import { createInterface } from "node:readline";
 
 import { getErrorMessageOrDefault } from "@vortex/shared";
 import type {
+  NativeArchiveExtractRequest,
+  NativeArchiveExtractResult,
+  NativeArchiveListRequest,
+  NativeArchiveListResult,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeployStatus,
+  NativeHashFilesRequest,
+  NativeHashFilesResult,
   NativeInstallRequest,
   NativeInstallResult,
   NativePurgeRequest,
@@ -165,6 +171,18 @@ export class NativeCoreClient {
 
   installApply(request: NativeInstallRequest): Promise<NativeInstallResult> {
     return this.#request("install.apply", request);
+  }
+
+  archiveList(request: NativeArchiveListRequest): Promise<NativeArchiveListResult> {
+    return this.#request("archive.list", request);
+  }
+
+  archiveExtract(request: NativeArchiveExtractRequest): Promise<NativeArchiveExtractResult> {
+    return this.#request("archive.extract", request);
+  }
+
+  hashFiles(request: NativeHashFilesRequest): Promise<NativeHashFilesResult> {
+    return this.#request("hash.files", request);
   }
 
   /** Stop the core process and reject anything still in flight. */

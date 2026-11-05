@@ -9,6 +9,7 @@ import type { IFileListItem } from "./types/IMod";
 import type { ISupportedInstaller } from "./types/IModInstaller";
 import type { ProgressDelegate } from "./types/InstallFunc";
 import type { ISupportedResult } from "./types/TestSupported";
+import { hashFilesNatively } from "./util/nativeDeploy";
 
 function testSupported(): Promise<ISupportedResult> {
   return Promise.resolve({
@@ -59,16 +60,34 @@ function makeListInstaller(
         progressDelegate: ProgressDelegate,
       ) => {
         let prog = 0;
-        // build lookup table of the existing files on disk md5 -> source path
+        // build lookup table of the existing files on disk checksum -> source path
         const filtered = files.filter((relPath) => !relPath.endsWith(path.sep));
         const lookup: Record<string, string> = {};
-        for (const [idx, relPath] of filtered.entries()) {
-          const checksum = await lookupFunc(path.join(basePath, relPath));
-          if (Math.floor((idx * 10) / filtered.length) > prog) {
-            prog = Math.floor((idx * 10) / filtered.length);
-            progressDelegate(prog * 10);
+        const absolutePaths = filtered.map((relPath) => path.join(basePath, relPath));
+        const nativeHashes = await hashFilesNatively(absolutePaths, idxId as "md5" | "xxh64").catch(
+          () => undefined,
+        );
+
+        if (nativeHashes !== undefined) {
+          for (const [idx, relPath] of filtered.entries()) {
+            const checksum = nativeHashes.get(absolutePaths[idx]);
+            if (checksum !== undefined) {
+              lookup[checksum] = relPath;
+            }
+            if (Math.floor((idx * 10) / filtered.length) > prog) {
+              prog = Math.floor((idx * 10) / filtered.length);
+              progressDelegate(prog * 10);
+            }
           }
-          lookup[checksum] = relPath;
+        } else {
+          for (const [idx, relPath] of filtered.entries()) {
+            const checksum = await lookupFunc(path.join(basePath, relPath));
+            if (Math.floor((idx * 10) / filtered.length) > prog) {
+              prog = Math.floor((idx * 10) / filtered.length);
+              progressDelegate(prog * 10);
+            }
+            lookup[checksum] = relPath;
+          }
         }
         // for each item in the extract list, look up the source path vial
         // the lookup table, then create the copy instruction.

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +10,7 @@ import { VortexCoreClient } from "./vortex-core-client.mjs";
 
 const corePath = process.env.VORTEX_CORE_PATH;
 assert.ok(corePath, "VORTEX_CORE_PATH must point at vortex-core");
+const sevenZip = process.env.VORTEX_7Z_PATH ?? "/usr/bin/7z";
 
 const root = mkdtempSync(join(tmpdir(), "vortex-core-client-"));
 const staging = join(root, "staging");
@@ -148,4 +151,34 @@ test("applies generic installer instructions in the core", async () => {
   assert.equal(readFileSync(join(destination, "nested", "b.txt"), "utf8"), "b");
   assert.equal(readFileSync(join(destination, "generated.txt"), "utf8"), "hello");
   assert.ok(existsSync(join(journalDir, `${result.operation}.jsonl`)));
+});
+
+test("hashes files in the core", async () => {
+  const result = await client.hashFiles({
+    algorithm: "md5",
+    files: [join(mod, "a.txt")],
+  });
+
+  assert.deepEqual(result.failures, []);
+  assert.equal(result.results[0].hash, createHash("md5").update("mod-a").digest("hex"));
+  assert.equal(result.results[0].bytes, 5);
+});
+
+test("lists and extracts archives through 7-Zip", { skip: !existsSync(sevenZip) }, async () => {
+  const archive = join(root, "sample.zip");
+  execFileSync(sevenZip, ["a", "-tzip", archive, "a.txt"], {
+    cwd: mod,
+    stdio: "ignore",
+  });
+
+  const listing = await client.archiveList({ archive, sevenZip });
+  assert.equal(listing.code, 0);
+  assert.deepEqual(listing.errors, []);
+  assert.ok(listing.entries.some((entry) => entry.path === "a.txt"));
+
+  const destination = join(root, "archive-out");
+  const extraction = await client.archiveExtract({ archive, destination, sevenZip });
+  assert.equal(extraction.code, 0);
+  assert.deepEqual(extraction.errors, []);
+  assert.equal(readFileSync(join(destination, "a.txt"), "utf8"), "mod-a");
 });

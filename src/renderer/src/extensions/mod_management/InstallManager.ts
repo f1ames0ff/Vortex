@@ -202,7 +202,7 @@ import { InstallPhaseTracker, type IDeploymentDetails } from "./util/InstallPhas
 import { isFuzzyVersion } from "./util/isFuzzyVersion";
 import metaLookupMatch from "./util/metaLookupMatch";
 import modName, { renderModReference } from "./util/modName";
-import { applyInstallNatively } from "./util/nativeDeploy";
+import { applyInstallNatively, extractArchiveNatively } from "./util/nativeDeploy";
 import queryGameId from "./util/queryGameId";
 import { reconcileOrphanedArchive } from "./util/reconcileOrphanedArchive";
 import { selectRequeueCandidates } from "./util/requeueCandidates";
@@ -3904,7 +3904,9 @@ class InstallManager {
     maxRetries: number = 3,
     retryDelayMs: number = 1000,
   ): Promise<{ code: number; errors: string[] }> {
-    const attemptExtract = (retriesLeft: number): Promise<{ code: number; errors: string[] }> => {
+    const attemptExtract = async (
+      retriesLeft: number,
+    ): Promise<{ code: number; errors: string[] }> => {
       const retryIfFileInUse = (errorMessages: string[]) => {
         if (retriesLeft > 0 && errorMessages.some((msg) => this.isFileInUse(msg))) {
           log("info", "archive file in use, retrying extraction", {
@@ -3917,49 +3919,53 @@ class InstallManager {
         return undefined;
       };
 
-      // DEBUG: Force random errors at 10% rate for testing
-      // if (Math.random() < 0.1) {
-      //   const errors = [
-      //     () =>
-      //       new ArchiveBrokenError(
-      //         path.basename(archivePath),
-      //         "debug test error",
-      //       ),
-      //     () => { const e = new Error("EPERM: operation not permitted"); (e as any).code = "EPERM"; (e as any).path = archivePath; return e; },
-      //     () => new ProcessCanceled("debug canceled"),
-      //     () => { const e = new Error("ENOENT: no such file or directory"); (e as any).code = "ENOENT"; (e as any).path = archivePath; return e; },
-      //   ];
-      //   return Promise.reject(
-      //     errors[Math.floor(Math.random() * errors.length)](),
-      //   );
-      // }
       // clean up any stale temp directory from a previous failed attempt
-      return Promise.resolve(fs.removeAsync(tempPath)).then(() =>
-        Promise.resolve(
-          zip
-            .extractFull(archivePath, tempPath, { ssc: false }, progress, queryPassword as any)
-            .then((result: { code: number; errors: string[] }) => {
-              // 7z can resolve (not reject) with a non-zero exit code and
-              // file-in-use errors. Retry in that case instead of proceeding
-              // with a partial extraction.
-              if (result.code !== 0) {
-                return retryIfFileInUse(result.errors ?? []) ?? result;
-              }
-              return result;
-            })
-            .catch((err) => {
-              const error = unknownToError(err);
-              return (
-                retryIfFileInUse([error.message]) ??
-                (this.isCritical(error.message)
-                  ? Promise.reject(
-                      new ArchiveBrokenError(path.basename(archivePath), error.message),
-                    )
-                  : Promise.reject(error))
-              );
-            }),
-        ),
-      );
+      await fs.removeAsync(tempPath);
+
+      let native: { code: number; errors: string[] } | undefined;
+      try {
+        native = await extractArchiveNatively(archivePath, tempPath);
+      } catch (err) {
+        log("warn", "native archive extraction failed, falling back", {
+          archivePath: path.basename(archivePath),
+          error: getErrorMessageOrDefault(err),
+        });
+      }
+
+      if (native !== undefined) {
+        progress([], native.code === 0 ? 100 : 0);
+        if (native.code !== 0) {
+          return (await retryIfFileInUse(native.errors)) ?? native;
+        }
+        return native;
+      }
+
+      try {
+        const result: { code: number; errors: string[] } = await zip.extractFull(
+          archivePath,
+          tempPath,
+          { ssc: false },
+          progress,
+          queryPassword as any,
+        );
+        // 7z can resolve (not reject) with a non-zero exit code and
+        // file-in-use errors. Retry in that case instead of proceeding
+        // with a partial extraction.
+        if (result.code !== 0) {
+          return (await retryIfFileInUse(result.errors ?? [])) ?? result;
+        }
+        return result;
+      } catch (err) {
+        const error = unknownToError(err);
+        const retried = await retryIfFileInUse([error.message]);
+        if (retried !== undefined) {
+          return retried;
+        }
+        if (this.isCritical(error.message)) {
+          throw new ArchiveBrokenError(path.basename(archivePath), error.message);
+        }
+        throw error;
+      }
     };
     return attemptExtract(maxRetries);
   }

@@ -57,6 +57,18 @@ export class VortexCoreClient {
     return this.request("install.apply", request);
   }
 
+  archiveList(request) {
+    return this.request("archive.list", request);
+  }
+
+  archiveExtract(request) {
+    return this.request("archive.extract", request);
+  }
+
+  hashFiles(request) {
+    return this.request("hash.files", request);
+  }
+
   request(method, params = {}) {
     const id = this.#nextId++;
     const request = { id, method, params };

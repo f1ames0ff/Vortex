@@ -178,3 +178,64 @@ export interface NativeInstallResult {
   report: NativeInstallReport;
   operation: string;
 }
+
+export interface NativeArchiveEntry {
+  path: string;
+  size: number;
+  directory: boolean;
+  encrypted: boolean;
+  symlink: boolean;
+}
+
+export interface NativeArchiveListRequest {
+  archive: string;
+  /** Injected by main when omitted. */
+  sevenZip?: string;
+  password?: string;
+}
+
+export interface NativeArchiveListResult {
+  code: number;
+  entries: NativeArchiveEntry[];
+  errors: string[];
+  encrypted: boolean;
+}
+
+export interface NativeArchiveExtractRequest {
+  archive: string;
+  destination: string;
+  /** Injected by main when omitted. */
+  sevenZip?: string;
+  password?: string;
+}
+
+export interface NativeArchiveExtractResult {
+  code: number;
+  entries: NativeArchiveEntry[];
+  errors: string[];
+}
+
+export type NativeHashAlgorithm = "md5" | "xxh64";
+
+export interface NativeHashFilesRequest {
+  files: string[];
+  algorithm: NativeHashAlgorithm;
+  concurrency?: number;
+}
+
+export interface NativeHashFileResult {
+  path: string;
+  hash: string;
+  bytes: number;
+}
+
+export interface NativeHashFailure {
+  path: string;
+  message: string;
+}
+
+export interface NativeHashFilesResult {
+  algorithm: NativeHashAlgorithm;
+  results: NativeHashFileResult[];
+  failures: NativeHashFailure[];
+}

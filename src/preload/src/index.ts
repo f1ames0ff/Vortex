@@ -54,6 +54,9 @@ try {
       purge: (request) => betterIpcRenderer.invoke("nativeDeploy:purge", request),
       stagingStatus: (request) => betterIpcRenderer.invoke("nativeDeploy:stagingStatus", request),
       installApply: (request) => betterIpcRenderer.invoke("nativeDeploy:installApply", request),
+      archiveList: (request) => betterIpcRenderer.invoke("nativeDeploy:archiveList", request),
+      archiveExtract: (request) => betterIpcRenderer.invoke("nativeDeploy:archiveExtract", request),
+      hashFiles: (request) => betterIpcRenderer.invoke("nativeDeploy:hashFiles", request),
     },
 
     shell: {

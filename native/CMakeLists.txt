@@ -37,8 +37,11 @@ target_include_directories(vortex_deployment
 find_package(Threads REQUIRED)
 
 add_library(vortex_core
+    src/archive.cpp
+    src/hash.cpp
     src/install.cpp
     src/path_safety.cpp
+    src/process.cpp
     src/status.cpp
 )
 target_link_libraries(vortex_core PUBLIC vortex_deployment Threads::Threads)
@@ -62,6 +65,14 @@ install(TARGETS vortex-core RUNTIME DESTINATION native)
 
 add_executable(vortex-deployment-tests tests/main.cpp)
 target_link_libraries(vortex-deployment-tests PRIVATE vortex_core vortex_game)
+
+# Archive tests use the external 7-Zip binary, exactly like the core.
+find_program(SEVEN_ZIP_EXECUTABLE NAMES 7z 7zz 7za)
+if(SEVEN_ZIP_EXECUTABLE)
+    target_compile_definitions(vortex-deployment-tests
+        PRIVATE VORTEX_7Z_PATH="${SEVEN_ZIP_EXECUTABLE}"
+    )
+endif()
 target_compile_definitions(vortex-deployment-tests PRIVATE
     VORTEX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
 )

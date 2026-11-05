@@ -35,6 +35,8 @@ import {
   applyInstallNatively,
   canDeployNatively,
   deployWithNativeCore,
+  extractArchiveNatively,
+  hashFilesNatively,
   inspectStagingNatively,
   purgeWithNativeCore,
   resetNativeDeployStatus,
@@ -47,6 +49,9 @@ interface FakeNativeDeploy {
   purge: ReturnType<typeof vi.fn>;
   stagingStatus: ReturnType<typeof vi.fn>;
   installApply: ReturnType<typeof vi.fn>;
+  archiveList: ReturnType<typeof vi.fn>;
+  archiveExtract: ReturnType<typeof vi.fn>;
+  hashFiles: ReturnType<typeof vi.fn>;
 }
 
 let nativeDeploy: FakeNativeDeploy;
@@ -76,6 +81,9 @@ beforeEach(() => {
     purge: vi.fn(),
     stagingStatus: vi.fn(),
     installApply: vi.fn(),
+    archiveList: vi.fn(),
+    archiveExtract: vi.fn(),
+    hashFiles: vi.fn(),
   };
   installApi(nativeDeploy);
   resetNativeDeployStatus();
@@ -293,5 +301,56 @@ describe("native staging adapter", () => {
         instructions: [],
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("hashes files in the core", async () => {
+    nativeDeploy.hashFiles.mockResolvedValue({
+      algorithm: "md5",
+      results: [
+        { path: "/temp/a.txt", hash: "abc", bytes: 1 },
+        { path: "/temp/b.txt", hash: "def", bytes: 2 },
+      ],
+      failures: [],
+    });
+
+    const result = await hashFilesNatively(["/temp/a.txt", "/temp/b.txt"], "md5");
+
+    expect(nativeDeploy.hashFiles).toHaveBeenCalledWith({
+      files: ["/temp/a.txt", "/temp/b.txt"],
+      algorithm: "md5",
+    });
+    expect(result?.get("/temp/a.txt")).toBe("abc");
+    expect(result?.get("/temp/b.txt")).toBe("def");
+  });
+
+  it("leaves encrypted archives to the TypeScript password prompt", async () => {
+    nativeDeploy.archiveList.mockResolvedValue({
+      code: 0,
+      entries: [],
+      errors: [],
+      encrypted: true,
+    });
+
+    await expect(extractArchiveNatively("/downloads/a.7z", "/temp/a")).resolves.toBeUndefined();
+    expect(nativeDeploy.archiveExtract).not.toHaveBeenCalled();
+  });
+
+  it("extracts unencrypted archives through the core", async () => {
+    nativeDeploy.archiveList.mockResolvedValue({
+      code: 0,
+      entries: [],
+      errors: [],
+      encrypted: false,
+    });
+    nativeDeploy.archiveExtract.mockResolvedValue({ code: 0, entries: [], errors: [] });
+
+    await expect(extractArchiveNatively("/downloads/a.7z", "/temp/a")).resolves.toEqual({
+      code: 0,
+      errors: [],
+    });
+    expect(nativeDeploy.archiveExtract).toHaveBeenCalledWith({
+      archive: "/downloads/a.7z",
+      destination: "/temp/a",
+    });
   });
 });

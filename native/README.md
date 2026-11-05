@@ -50,7 +50,10 @@ Supported requests:
 {"id":6,"method":"staging.status","params":{"staging":"/staging","mods":[{"id":"mod-a","installationPath":"ModA"},{"id":"mod-b","installationPath":"ModB"}]}}
 {"id":7,"method":"install.apply","params":{"temp":"/tmp/ModA.extracted","destination":"/staging/ModA","instructions":[{"type":"hardlink","source":"textures/a.dds","destination":"textures/a.dds"},{"type":"write","destination":"meta.ini","data":"..."}]}}
 {"id":8,"method":"game.registry","params":{"directory":"/games"}}
-{"id":9,"method":"shutdown","params":{}}
+{"id":9,"method":"archive.list","params":{"archive":"/downloads/ModA.7z","sevenZip":"/path/to/7z"}}
+{"id":10,"method":"archive.extract","params":{"archive":"/downloads/ModA.7z","destination":"/tmp/ModA.extracted","sevenZip":"/path/to/7z"}}
+{"id":11,"method":"hash.files","params":{"algorithm":"md5","files":["/tmp/ModA/a.txt"]}}
+{"id":12,"method":"shutdown","params":{}}
 ```
 
 Every response echoes `id` and contains either `result` or `error`. Commands
@@ -78,6 +81,13 @@ durable `install.begin`, per-failure `install.failure` entries, and a durable
 `install.complete` or `install.failed`. It defaults to
 `<staging>/.vortex-install-journal`. FOMOD script execution stays in the
 existing .NET host; the core only receives its resolved instructions.
+
+`archive.list` and `archive.extract` invoke the existing 7-Zip binary; the core
+does not embed or reimplement the archiver. Every listed path is validated
+before extraction, and archives containing absolute paths, `..` or symlinks are
+rejected. `archive.extract` passes `-snl-` so symlinks are not recreated.
+`hash.files` streams MD5 or XXH64 over a batch on worker threads; XXH64 is
+returned as the same big-endian base64 digest the renderer uses.
 
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.

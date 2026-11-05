@@ -35,10 +35,16 @@ import type {
 } from "./ipc";
 import type { Level } from "./logging";
 import type {
+  NativeArchiveExtractRequest,
+  NativeArchiveExtractResult,
+  NativeArchiveListRequest,
+  NativeArchiveListResult,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeployStatus,
+  NativeHashFilesRequest,
+  NativeHashFilesResult,
   NativeInstallRequest,
   NativeInstallResult,
   NativePurgeRequest,
@@ -624,6 +630,15 @@ export interface NativeDeployApi {
 
   /** Applies generic installer instructions in the core process. */
   installApply(request: NativeInstallRequest): Promise<NativeInstallResult>;
+
+  /** Lists an archive through the core's external 7-Zip process. */
+  archiveList(request: NativeArchiveListRequest): Promise<NativeArchiveListResult>;
+
+  /** Extracts an archive through the core's external 7-Zip process. */
+  archiveExtract(request: NativeArchiveExtractRequest): Promise<NativeArchiveExtractResult>;
+
+  /** Hashes a batch of files off the renderer thread. */
+  hashFiles(request: NativeHashFilesRequest): Promise<NativeHashFilesResult>;
 }
 
 export interface FeatureFlagsApi {

@@ -26,10 +26,16 @@ import type {
 import type { FeatureFlag } from "./flags";
 import type { Level } from "./logging";
 import type {
+  NativeArchiveExtractRequest,
+  NativeArchiveExtractResult,
+  NativeArchiveListRequest,
+  NativeArchiveListResult,
   NativeDeployPlanSummary,
   NativeDeployRequest,
   NativeDeployResult,
   NativeDeployStatus,
+  NativeHashFilesRequest,
+  NativeHashFilesResult,
   NativeInstallRequest,
   NativeInstallResult,
   NativePurgeRequest,
@@ -400,6 +406,13 @@ export interface InvokeChannels {
   "nativeDeploy:purge": (request: NativePurgeRequest) => Promise<NativePurgeResult>;
   "nativeDeploy:stagingStatus": (request: NativeStagingRequest) => Promise<NativeStagingResult>;
   "nativeDeploy:installApply": (request: NativeInstallRequest) => Promise<NativeInstallResult>;
+  "nativeDeploy:archiveList": (
+    request: NativeArchiveListRequest,
+  ) => Promise<NativeArchiveListResult>;
+  "nativeDeploy:archiveExtract": (
+    request: NativeArchiveExtractRequest,
+  ) => Promise<NativeArchiveExtractResult>;
+  "nativeDeploy:hashFiles": (request: NativeHashFilesRequest) => Promise<NativeHashFilesResult>;
 
   // bsdiff binary patching, run on a main-process worker_thread (only paths cross IPC)
   "bsdiff:create": (oldPath: string, newPath: string, patchPath: string) => Promise<void>;

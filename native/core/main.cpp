@@ -4,6 +4,8 @@
 #include "vortex/deployment/manifest.hpp"
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
+#include "vortex/core/archive.hpp"
+#include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/status.hpp"
 #include "vortex/game/descriptor.hpp"
@@ -201,6 +203,32 @@ json gameJson(const vortex::game::GameDescriptor& game) {
     return value;
 }
 
+json archiveEntryJson(const vortex::core::ArchiveEntry& entry) {
+    return {
+        {"path", entry.path},
+        {"size", entry.size},
+        {"directory", entry.directory},
+        {"encrypted", entry.encrypted},
+        {"symlink", entry.symlink},
+    };
+}
+
+json archiveEntriesJson(const std::vector<vortex::core::ArchiveEntry>& entries) {
+    json result = json::array();
+    for (const auto& entry : entries) {
+        result.push_back(archiveEntryJson(entry));
+    }
+    return result;
+}
+
+json stringsJson(const std::vector<std::string>& values) {
+    json result = json::array();
+    for (const auto& value : values) {
+        result.push_back(value);
+    }
+    return result;
+}
+
 vortex::core::InstallInstructionType parseInstructionType(const std::string& value) {
     if (value == "mkdir") {
         return vortex::core::InstallInstructionType::Mkdir;
@@ -259,8 +287,8 @@ json dispatch(CoreState& state, const Request& request) {
             {"version", CORE_VERSION},
             {"protocol", CORE_PROTOCOL},
             {"capabilities",
-             {"ping", "scan", "staging.status", "install.apply", "game.registry", "plan",
-              "deploy", "purge"}},
+             {"ping", "scan", "staging.status", "install.apply", "game.registry",
+              "archive.list", "archive.extract", "hash.files", "plan", "deploy", "purge"}},
             {"pid", 0},
         };
     }
@@ -296,6 +324,77 @@ json dispatch(CoreState& state, const Request& request) {
         }
         index.flush();
         return {{"mods", folders}, {"files", files}};
+    }
+
+    if (request.method == "archive.list" || request.method == "archive.extract") {
+        const auto archive = pathFromUtf8(params.value("archive", std::string{}));
+        const auto sevenZip = pathFromUtf8(params.value("sevenZip", std::string{}));
+        if (archive.empty() || sevenZip.empty()) {
+            throw std::runtime_error("params.archive and params.sevenZip are required");
+        }
+        const auto password = params.value("password", std::string{});
+
+        if (request.method == "archive.list") {
+            const auto listing = vortex::core::listArchive(archive, sevenZip, password);
+            return {
+                {"code", listing.code},
+                {"entries", archiveEntriesJson(listing.entries)},
+                {"errors", stringsJson(listing.errors)},
+                {"encrypted", listing.encrypted},
+            };
+        }
+
+        const auto destination = pathFromUtf8(params.value("destination", std::string{}));
+        if (destination.empty()) {
+            throw std::runtime_error("params.destination is required");
+        }
+        const auto extraction =
+            vortex::core::extractArchive(archive, destination, sevenZip, password);
+        return {
+            {"code", extraction.code},
+            {"entries", archiveEntriesJson(extraction.entries)},
+            {"errors", stringsJson(extraction.errors)},
+        };
+    }
+
+    if (request.method == "hash.files") {
+        if (!params.contains("files") || !params["files"].is_array()) {
+            throw std::runtime_error("params.files must be an array");
+        }
+        std::vector<std::string> files;
+        files.reserve(params["files"].size());
+        for (const auto& item : params["files"]) {
+            if (!item.is_string()) {
+                throw std::runtime_error("each file must be a string");
+            }
+            files.push_back(item.get<std::string>());
+        }
+
+        const auto algorithm =
+            vortex::core::parseHashAlgorithm(params.value("algorithm", std::string("md5")));
+        const auto concurrency = params.value("concurrency", std::size_t{8});
+        const auto hashes = vortex::core::hashFiles(files, algorithm, concurrency);
+
+        json results = json::array();
+        for (const auto& result : hashes.results) {
+            if (result.path.empty()) {
+                continue;
+            }
+            results.push_back({
+                {"path", result.path},
+                {"hash", result.hash},
+                {"bytes", result.bytes},
+            });
+        }
+        json failures = json::array();
+        for (const auto& failure : hashes.failures) {
+            failures.push_back({{"path", failure.path}, {"message", failure.message}});
+        }
+        return {
+            {"algorithm", vortex::core::hashAlgorithmName(algorithm)},
+            {"results", std::move(results)},
+            {"failures", std::move(failures)},
+        };
     }
 
     if (request.method == "staging.status") {
