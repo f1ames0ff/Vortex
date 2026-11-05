@@ -23,6 +23,8 @@ export interface IGraphSelection {
 
 export interface IGraphViewProps {
   elements: { [id: string]: IGraphElement };
+  /** Node ids in display order; the closing edge is implied. */
+  highlightedCycle?: string[];
   className: string;
   style?: any;
   visualStyle: cytoscape.StylesheetJson;
@@ -47,14 +49,19 @@ class GraphView extends React.Component<IGraphViewProps, {}> {
   }
 
   public UNSAFE_componentWillReceiveProps(newProps: IGraphViewProps) {
-    if (newProps.elements !== this.mLastProps.elements) {
-      const changed = util.objDiff(this.mLastProps.elements, newProps.elements);
-      // bit of a hack because we got componentWillReceiveProps trigger twice with the same
-      // props which causes an error further down the line as we try to update the graph
-      this.mLastProps = newProps;
-      if (this.mGraph === undefined) {
-        return;
-      }
+    const previousProps = this.mLastProps;
+    const elementsChanged = newProps.elements !== previousProps.elements;
+    const highlightChanged = newProps.highlightedCycle !== previousProps.highlightedCycle;
+    // bit of a hack because we got componentWillReceiveProps trigger twice with the same
+    // props which causes an error further down the line as we try to update the graph
+    this.mLastProps = newProps;
+
+    if (this.mGraph === undefined || (!elementsChanged && !highlightChanged)) {
+      return;
+    }
+
+    if (elementsChanged) {
+      const changed = util.objDiff(previousProps.elements, newProps.elements);
 
       const newConnections = [];
 
@@ -92,10 +99,10 @@ class GraphView extends React.Component<IGraphViewProps, {}> {
         } else {
           // updated classes
           const nodeId = san(id);
-          if (this.props.elements[id].class !== newProps.elements[id].class) {
+          if (previousProps.elements[id].class !== newProps.elements[id].class) {
             this.mGraph
               .$(`node#${nodeId}, edge[target = "${nodeId}"]`)
-              .removeClass(this.props.elements[id].class)
+              .removeClass(previousProps.elements[id].class)
               .addClass(newProps.elements[id].class);
           }
           // node content changed
@@ -137,68 +144,13 @@ class GraphView extends React.Component<IGraphViewProps, {}> {
           this.mGraph.add(conn);
         }
       });
-
-      this.mGraph.elements().removeClass("cycle-hidden").removeClass("cycle-highlight");
     }
+
+    this.applyCycleHighlight(newProps.highlightedCycle);
   }
 
   public layout() {
     this.mLayout.run();
-  }
-
-  public highlightCycle(nodeId: string) {
-    // we find the cycle by using a pathfinding algorithm
-    // Since the algorithms are implemented to stop immediately when start and goal
-    // are the same node, we have to identify the nodes reachable from the selection
-    // and do a search from each.
-
-    const followers = this.mGraph
-      .$(`#${san(nodeId)}`)
-      .outgoers()
-      .filter((ele) => ele !== undefined && ele.group() === "nodes");
-
-    const firstCycle = followers.reduce((prev, node) => {
-      if (node === undefined) {
-        return;
-      }
-      if (prev === undefined) {
-        const root = san(node.id());
-        const goal = san(nodeId);
-
-        if (
-          this.mGraph.getElementById(root).length === 0 ||
-          this.mGraph.getElementById(goal).length === 0
-        ) {
-          throw new Error(`invalid route "${node.id()}" to "${nodeId}"`);
-        }
-
-        const path = this.mGraph.elements().aStar({
-          root: `#${root}`,
-          goal: `#${goal}`,
-          directed: true,
-        });
-        if (path.found) {
-          prev = path.path;
-        }
-      }
-      return prev;
-    }, undefined);
-
-    if (firstCycle !== undefined) {
-      // unhighlight previous cycle if necessary
-      this.mGraph.elements().addClass("cycle-hidden").removeClass("cycle-highlight");
-
-      // highlight edge to the node from which the cycle starts
-      this.mGraph
-        .$(`#${san(nodeId)}-to-${san(firstCycle[0].id())}`)
-        .removeClass("cycle-hidden")
-        .addClass("cycle-highlight");
-      // highlight all other edges in the cycle
-      firstCycle
-        .filter((iter) => iter.group() === "edges")
-        .removeClass("cycle-hidden")
-        .addClass("cycle-highlight");
-    }
   }
 
   public render(): JSX.Element {
@@ -208,7 +160,7 @@ class GraphView extends React.Component<IGraphViewProps, {}> {
   }
 
   private setRef = (ref: HTMLDivElement) => {
-    const { elements, visualStyle } = this.props;
+    const { elements, highlightedCycle, visualStyle } = this.props;
     if (ref === null) {
       (this.mGraph as any).off("cxttap", this.handleContext);
       this.mGraph = undefined;
@@ -223,6 +175,7 @@ class GraphView extends React.Component<IGraphViewProps, {}> {
       boxSelectionEnabled: false,
     });
     this.addElements(elements || {});
+    this.applyCycleHighlight(highlightedCycle);
     this.mGraph.resize();
     this.mGraph.center();
     this.mLayout = this.mGraph.layout({
@@ -294,6 +247,33 @@ class GraphView extends React.Component<IGraphViewProps, {}> {
         return prev;
       }, []),
     );
+  }
+
+  private applyCycleHighlight(cycle: string[] | undefined) {
+    this.mGraph
+      .edges()
+      .removeClass("cycle-highlight")
+      .removeClass("cycle-conflict")
+      .addClass("cycle-hidden");
+    this.mGraph.nodes().removeClass("cycle-current").removeClass("cycle-conflict");
+
+    if (cycle === undefined || cycle.length === 0) {
+      this.mGraph.edges().removeClass("cycle-hidden");
+      return;
+    }
+
+    cycle.forEach((modId) => {
+      this.mGraph.$(`node#${san(modId)}`).addClass("cycle-current");
+    });
+
+    for (let idx = 0; idx < cycle.length; ++idx) {
+      const source = san(cycle[idx]);
+      const target = san(cycle[(idx + 1) % cycle.length]);
+      this.mGraph
+        .$(`edge#${source}-to-${target}`)
+        .removeClass("cycle-hidden")
+        .addClass("cycle-highlight");
+    }
   }
 }
 

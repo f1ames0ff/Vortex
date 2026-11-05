@@ -346,6 +346,21 @@
     .modal-body {
         max-height: 80vh;
     }
+    .cycle-navigation {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5em;
+        margin-bottom: 0.75em;
+
+        .cycle-path {
+            flex-basis: 100%;
+            color: $text-color-disabled;
+            font-size: 0.9em;
+            line-height: 1.4;
+            word-break: break-word;
+        }
+    }
 }
 
 .conflict-graph {

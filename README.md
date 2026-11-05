@@ -24,6 +24,7 @@ Our approach with Vortex aims to take complex tasks such as sorting your load or
 - **Close integration with Nexus Mods** - Vortex is designed to seamlessly interact with Nexus Mods, allowing you to easily find, install, and play mods from our site, learn about new files and catch the latest news.
 
 - **Modding made easy** - The built-in auto-sorting system manages your load order and helps you to resolve mod conflicts with powerful, yet easy to use plugin management features.
+- **Cycle resolver** - The dependency graph highlights one concrete cycle at a time, shows the full path, and lets you step through every detected cycle instead of painting the whole connected cluster red.
 
 - **Mod Profiles** - Easily set up, switch between, and manage independent mod profiles, enabling you to use exactly the combination of mods that you want for a particular playthrough.
 

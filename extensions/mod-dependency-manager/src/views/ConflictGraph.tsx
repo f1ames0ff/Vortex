@@ -22,6 +22,7 @@ import { setEditCycle } from "../actions";
 import { NAMESPACE } from "../statics";
 import { IBiDirRule } from "../types/IBiDirRule";
 import { IConflict } from "../types/IConflict";
+import { findShortestCycles } from "../util/findShortestCycles";
 import genGraphStyle from "../util/genGraphStyle";
 import GraphView, { IGraphElement, IGraphSelection } from "./GraphView";
 
@@ -70,6 +71,8 @@ interface IComponentState {
   };
 
   elements: { [id: string]: IGraphElement };
+  cycles: string[][];
+  currentCycle: number;
   // working indicates that we changed a rule and haven't received updated rules through props yet
   working: boolean;
 }
@@ -120,6 +123,8 @@ class ConflictGraph extends ComponentEx<IProps, IComponentState> {
       counter: 0,
       context: undefined,
       elements: undefined,
+      cycles: [],
+      currentCycle: 0,
       working: false,
     });
     // TODO: horrible hack, just to get this to update when mod rules change
@@ -203,8 +208,8 @@ class ConflictGraph extends ComponentEx<IProps, IComponentState> {
             </div>
             <div>
               {t(
-                "If there are too many connections you can highlight a single cycle " +
-                  "by right-clicking on one of the mods.",
+                "The red loop is one cycle. Use Previous/Next above the graph to step " +
+                  "through every cycle; right-click a mod to jump to a cycle containing it.",
               )}
             </div>
             <div>
@@ -284,23 +289,70 @@ class ConflictGraph extends ComponentEx<IProps, IComponentState> {
       return prev;
     }, {});
 
+    const cycles = findShortestCycles(
+      Object.keys(elements).reduce<{ [nodeId: string]: string[] }>((prev, modId) => {
+        prev[modId] = elements[modId].connections;
+        return prev;
+      }, {}),
+    );
+
+    this.nextState.cycles = cycles;
+    this.nextState.currentCycle = 0;
     this.nextState.elements = elements;
   }
 
   private renderGraph(): JSX.Element {
-    const { elements } = this.state;
+    const { elements, cycles, currentCycle } = this.state;
     const sheet = this.getThemeSheet();
 
     return (
-      <GraphView
-        className="conflict-graph"
-        elements={elements}
-        visualStyle={genGraphStyle(sheet)}
-        onContext={this.openContext}
-        ref={this.setGraphRef}
-      />
+      <>
+        {cycles.length > 0 ? this.renderCycleNavigation() : null}
+        <GraphView
+          className="conflict-graph"
+          elements={elements}
+          highlightedCycle={cycles[currentCycle]}
+          visualStyle={genGraphStyle(sheet)}
+          onContext={this.openContext}
+          ref={this.setGraphRef}
+        />
+      </>
     );
   }
+
+  private renderCycleNavigation(): JSX.Element {
+    const { t } = this.props;
+    const { elements, cycles, currentCycle } = this.state;
+    const cycle = cycles[currentCycle] ?? [];
+    const names = cycle.map((modId) => elements?.[modId]?.title ?? modId);
+    const path = names.length > 1 ? [...names, names[0]].join(" → ") : names.join("");
+
+    return (
+      <div className="cycle-navigation">
+        <Button disabled={cycles.length < 2} onClick={() => this.stepCycle(-1)}>
+          {t("Previous")}
+        </Button>
+        <span>
+          {t("Cycle {{ current }} of {{ total }}", {
+            current: currentCycle + 1,
+            total: cycles.length,
+          })}
+        </span>
+        <Button disabled={cycles.length < 2} onClick={() => this.stepCycle(1)}>
+          {t("Next")}
+        </Button>
+        <span className="cycle-path">{path}</span>
+      </div>
+    );
+  }
+
+  private stepCycle = (delta: number) => {
+    const count = this.state.cycles.length;
+    if (count === 0) {
+      return;
+    }
+    this.nextState.currentCycle = (this.state.currentCycle + delta + count) % count;
+  };
 
   private setGraphRef = (ref: GraphView) => {
     this.mGraphRef = ref;
@@ -313,11 +365,9 @@ class ConflictGraph extends ComponentEx<IProps, IComponentState> {
 
   private highlightCycle = () => {
     const { id } = this.state.context.selection;
-
-    try {
-      this.mGraphRef.highlightCycle(id);
-    } catch (err) {
-      this.context.api.showErrorNotification("Failed to highlight cycle", err);
+    const cycleIndex = this.state.cycles.findIndex((cycle) => cycle.includes(id));
+    if (cycleIndex !== -1) {
+      this.nextState.currentCycle = cycleIndex;
     }
   };
 

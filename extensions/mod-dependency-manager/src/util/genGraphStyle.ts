@@ -2,7 +2,7 @@ function transformRules(rules: CSSStyleRule[]): { [id: string]: any } {
   return rules
     .filter((rule) => rule.selectorText !== undefined && rule.selectorText.startsWith("#variable"))
     .reduce((prev, rule) => {
-      const [id, type, key] = rule.selectorText.split(" ");
+      const [, type, key] = rule.selectorText.split(" ");
       prev[key.slice(1)] = rule.style[type.slice(1)];
       return prev;
     }, {});
@@ -42,17 +42,26 @@ export default function (rules: CSSStyleRule[]) {
       },
     },
     {
+      selector: "node.cycle-current",
+      style: {
+        "border-color": variables["brand-danger"],
+        "border-width": 3,
+      },
+    },
+    {
       selector: "edge.cycle-hidden",
       style: {
         "line-color": variables["text-color-disabled"],
         "mid-target-arrow-color": variables["text-color-disabled"],
+        width: 2,
       },
     },
     {
       selector: "edge.cycle-highlight",
       style: {
-        "line-color": variables["link-color"],
-        "mid-target-arrow-color": variables["link-color"],
+        "line-color": variables["brand-danger"],
+        "mid-target-arrow-color": variables["brand-danger"],
+        width: 4,
       },
     },
   ] as any;
