@@ -17,6 +17,7 @@ std::string normalized_key(const std::filesystem::path& path, bool case_insensit
 bool is_same_file(const std::filesystem::path& lhs, const std::filesystem::path& rhs);
 std::uintmax_t link_count(const std::filesystem::path& path);
 bool is_hardlink_to(const std::filesystem::path& source, const std::filesystem::path& target);
+bool is_symlink_to(const std::filesystem::path& source, const std::filesystem::path& target);
 
 std::filesystem::path backup_path(const std::filesystem::path& target);
 void atomic_replace(const std::filesystem::path& source, const std::filesystem::path& destination);

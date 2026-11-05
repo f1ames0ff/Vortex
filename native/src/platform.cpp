@@ -97,6 +97,22 @@ bool is_hardlink_to(const fs::path& source, const fs::path& target) {
     return is_same_file(source, target);
 }
 
+bool is_symlink_to(const fs::path& source, const fs::path& target) {
+    std::error_code ec;
+    const auto status = fs::symlink_status(target, ec);
+    if (ec || !fs::is_symlink(status)) {
+        return false;
+    }
+    auto link = fs::read_symlink(target, ec);
+    if (ec) {
+        return false;
+    }
+    if (link.is_relative()) {
+        link = target.parent_path() / link;
+    }
+    return fs::equivalent(link, source, ec) && !ec;
+}
+
 fs::path backup_path(const fs::path& target) {
     return fs::path(target.native() + fs::path(".vortex_backup").native());
 }

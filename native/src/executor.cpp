@@ -31,6 +31,18 @@ bool pathExists(const fs::path& path) {
     return fs::exists(path, ec);
 }
 
+bool isOwnDeployment(const ExecutorContext& context, const fs::path& source,
+                     const fs::path& output) {
+    if (context.deploymentMethod == "symlink") {
+        return platform::is_symlink_to(source, output);
+    }
+    return platform::is_hardlink_to(source, output);
+}
+
+std::string deploymentMethod(const ExecutorContext& context) {
+    return context.deploymentMethod.empty() ? "hardlink" : context.deploymentMethod;
+}
+
 void ensureParent(const fs::path& path) {
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
@@ -72,7 +84,7 @@ bool removeEntry(const ExecutorContext& context, const DeployedFile& file, bool 
         return true;
     }
 
-    if (!platform::is_hardlink_to(source, output)) {
+    if (!isOwnDeployment(context, source, output)) {
         recordFailure(report, file, output,
                       "the target was changed outside Vortex; refusing to remove it");
         return false;
@@ -102,13 +114,19 @@ bool linkEntry(const ExecutorContext& context, const DeployedFile& file, ApplyRe
     const auto output = outputPath(context, file);
     const auto backup = platform::backup_path(output);
 
+    const auto method = deploymentMethod(context);
+    if (method != "hardlink" && method != "symlink") {
+        recordFailure(report, file, output, "unsupported deployment method: " + method);
+        return false;
+    }
+
     if (!pathExists(source)) {
         recordFailure(report, file, output,
                       "source file does not exist in the mod staging folder");
         return false;
     }
 
-    if (pathExists(output) && platform::is_hardlink_to(source, output)) {
+    if (pathExists(output) && isOwnDeployment(context, source, output)) {
         ++report.skipped;
         journal.event("file.skip", fileDetails(file, output));
         return true;
@@ -121,11 +139,11 @@ bool linkEntry(const ExecutorContext& context, const DeployedFile& file, ApplyRe
         const bool backupExists = pathExists(backup);
 
         if (outputExists && backupExists) {
-            if (platform::link_count(output) < 2) {
+            if (!isOwnDeployment(context, source, output)) {
                 recordFailure(
                     report, file, output,
-                    "a .vortex_backup already exists but the target is not a hardlink; "
-                    "remove the stale backup or resolve the file manually");
+                    "a .vortex_backup already exists but the target is not owned by this "
+                    "deployment; remove the stale backup or resolve the file manually");
                 return false;
             }
             fs::remove(output);
@@ -137,14 +155,26 @@ bool linkEntry(const ExecutorContext& context, const DeployedFile& file, ApplyRe
         }
 
         std::error_code ec;
-        fs::create_hard_link(source, output, ec);
-        if (ec == std::errc::file_exists) {
-            fs::remove(output, ec);
-            ec.clear();
+        if (method == "symlink") {
+            fs::create_symlink(source, output, ec);
+            if (ec == std::errc::file_exists) {
+                fs::remove(output, ec);
+                ec.clear();
+                fs::create_symlink(source, output, ec);
+            }
+            if (ec) {
+                throw std::system_error(ec, "create symlink");
+            }
+        } else {
             fs::create_hard_link(source, output, ec);
-        }
-        if (ec) {
-            throw std::system_error(ec, "create hard link");
+            if (ec == std::errc::file_exists) {
+                fs::remove(output, ec);
+                ec.clear();
+                fs::create_hard_link(source, output, ec);
+            }
+            if (ec) {
+                throw std::system_error(ec, "create hard link");
+            }
         }
 
         ++report.linked;

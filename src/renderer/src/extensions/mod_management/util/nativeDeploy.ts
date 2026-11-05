@@ -36,6 +36,7 @@ import { manifestPaths } from "./activationStore";
 
 /** The deployment method whose on-disk behaviour the native core implements. */
 export const NATIVE_DEPLOY_METHOD_ID = "hardlink_activator";
+const NATIVE_DEPLOY_METHOD_IDS = new Set([NATIVE_DEPLOY_METHOD_ID, "symlink_activator"]);
 
 let statusPromise: Promise<NativeDeployStatus> | undefined;
 
@@ -75,11 +76,14 @@ export function resetNativeDeployStatus(): void {
 }
 
 export async function canDeployNatively(method: IDeploymentMethod): Promise<boolean> {
-  if (method.id !== NATIVE_DEPLOY_METHOD_ID) {
+  if (!NATIVE_DEPLOY_METHOD_IDS.has(method.id)) {
     return false;
   }
   const status = await nativeDeployStatus();
-  return status.enabled && status.available;
+  if (!status.enabled || !status.available) {
+    return false;
+  }
+  return method.id !== "symlink_activator" || coreSupports(status, "deploy.symlink");
 }
 
 /** A core from before the capability handshake has no capability list. */

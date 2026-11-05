@@ -543,7 +543,7 @@ json dispatch(CoreState& state, const Request& request) {
              {"ping", "scan", "staging.status", "install.apply", "game.registry",
               "archive.list", "archive.extract", "hash.files", "deps.matchMod",
               "deps.matchDownload", "deps.resolve", "collection.plan", "plan", "deploy",
-              "purge"}},
+              "deploy.symlink", "purge"}},
             {"pid", 0},
         };
     }

@@ -101,9 +101,23 @@ afterEach(() => {
 });
 
 describe("native deployment adapter", () => {
-  it("stays disabled for non-hardlink deployment methods", async () => {
-    expect(await canDeployNatively({ id: "symlink_activator" } as never)).toBe(false);
+  it("stays disabled for methods the core does not implement", async () => {
+    expect(await canDeployNatively({ id: "move_activator" } as never)).toBe(false);
     expect(nativeDeploy.status).not.toHaveBeenCalled();
+  });
+
+  it("enables symlink deployment when the core advertises it", async () => {
+    nativeDeploy.status.mockResolvedValue({
+      enabled: true,
+      available: true,
+      capabilities: ["deploy.symlink"],
+    });
+    expect(await canDeployNatively({ id: "symlink_activator" } as never)).toBe(true);
+  });
+
+  it("keeps symlink deployment on the TS path without the capability", async () => {
+    nativeDeploy.status.mockResolvedValue({ enabled: true, available: true, capabilities: [] });
+    expect(await canDeployNatively({ id: "symlink_activator" } as never)).toBe(false);
   });
 
   it("maps Vortex mods and the merge source onto the wire request", async () => {

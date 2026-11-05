@@ -222,6 +222,46 @@ void testDeployAndPurge() {
     fs::remove_all(root);
 }
 
+void testSymlinkDeployAndPurge() {
+#ifndef _WIN32
+    const auto root = makeRoot("symlink-deploy");
+    const auto staging = root / "staging";
+    const auto target = root / "target";
+    const auto manifestPath = root / "manifest.json";
+    const auto mod = staging / "ModA";
+    writeFile(mod / "a.txt", "mod-a");
+    writeFile(target / "a.txt", "game-a");
+
+    const std::vector<ModSpec> mods = {{"ModA", "ModA", "", {}}};
+    const PlanOptions planOptions;
+    IndexStore index(staging);
+    auto plan = planDeployment(staging, target, mods, Manifest{}, planOptions, index);
+
+    Journal journal(root / "journal.jsonl", platform::operation_id());
+    ExecutorContext context;
+    context.stagingPath = staging;
+    context.targetPath = target;
+    context.manifestPath = manifestPath;
+    context.instance = "test";
+    context.deploymentMethod = "symlink";
+
+    const auto report = applyDeployment(plan, context, journal);
+    check(report.failures.empty(), "symlink deploy should not fail");
+    check(fs::is_symlink(target / "a.txt"), "deployed file is a symlink");
+    check(platform::is_symlink_to(mod / "a.txt", target / "a.txt"), "symlink points at staging");
+    check(readFile(target / "a.txt") == "mod-a", "symlink content");
+
+    context.previous = loadManifest(manifestPath);
+    Journal purgeJournal(root / "purge.jsonl", platform::operation_id());
+    const auto purgeReport = purgeDeployment(context.previous, context, purgeJournal);
+    check(purgeReport.failures.empty(), "symlink purge should not fail");
+    check(!fs::is_symlink(target / "a.txt"), "purge removes the symlink");
+    check(readFile(target / "a.txt") == "game-a", "symlink purge restores the game file");
+
+    fs::remove_all(root);
+#endif
+}
+
 void testPurgeKeepsFailedEntries() {
     const auto root = makeRoot("purge-failure");
     const auto staging = root / "staging";
@@ -864,6 +904,7 @@ int main() {
         testIndexCachesAndInvalidates();
         testPlannerDiff();
         testDeployAndPurge();
+        testSymlinkDeployAndPurge();
         testPurgeKeepsFailedEntries();
         testStaleBackupReportsActionableFailure();
         testFileErrorsBecomeFailures();

@@ -1,9 +1,9 @@
 # Vortex native core
 
 C++ deployment core for the post-Electron Vortex architecture. This is the first
-vertical slice: file index, deployment planner, hardlink executor, journal and
+vertical slice: file index, deployment planner, hardlink/symlink executor, journal and
 manifest compatibility, plus the feature-flagged Electron integration that runs
-hardlink deployments through the core process.
+hardlink/symlink deployments through the core process.
 
 ## Requirements
 
@@ -162,7 +162,7 @@ the dev build's empty state, use the production-data launcher:
 
 ```sh
 pnpm run start:prod          # installed app's data, TypeScript deployment
-pnpm run start:prod:native   # installed app's data, hardlink via vortex-core
+pnpm run start:prod:native   # installed app's data, native deployment via vortex-core
 ```
 
 `VORTEX_PROD_DATA=1` resolves the production user-data directory
@@ -170,7 +170,7 @@ pnpm run start:prod:native   # installed app's data, hardlink via vortex-core
 is treated as a path, e.g. `VORTEX_PROD_DATA=/path/to/user-data`. The existing
 `--user-data <path>` CLI flag still works too.
 
-When enabled, `hardlink_activator` deployments and purges are routed through
+When enabled, `hardlink_activator` and `symlink_activator` deployments and purges are routed through
 the core, and `ModList` asks the core for staging status instead of walking
 every installed mod in the renderer. Other deployment methods, a missing
 binary, or a disabled flag keep the existing TypeScript implementation. The
@@ -185,8 +185,7 @@ off or the core lacks the capability.
 
 Known integration gaps for the next slice:
 
-- Only hardlink deployment is routed; symlink/move and single-mod activation
-  still use the TypeScript path.
+- Move deployment and single-mod activation still use the TypeScript path.
 - Exact skip-list entries are passed to the core; minimatch patterns from
   `ignoreDeploy` still rely on the TypeScript path.
 - The packaged app does not embed a Windows build of the core yet.
@@ -278,7 +277,7 @@ third_party/nlohmann/        vendored JSON header
 
 1. Add the Windows-specific hardlink and long-path backend and run the suite in
    a Windows CI runner.
-2. Route single-mod activation, symlink and move deployment through the core.
+2. Route single-mod activation and move deployment through the core.
 3. Move archive extraction into the core (spawning the existing 7-Zip binary)
    so `InstallManager` no longer orchestrates extraction in the renderer.
 4. Move dependency resolution and collection phase scheduling into the core,
