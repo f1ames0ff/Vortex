@@ -35,7 +35,7 @@ const formats: { [version: number]: ManifestFormat } = {
 };
 
 /** A mod type's manifest in the deployment target and its two backups in the staging folder. */
-function manifestPaths(deployPath: string, stagingPath: string, modType: string) {
+export function manifestPaths(deployPath: string, stagingPath: string, modType: string) {
   const typeTag = modType !== undefined && modType.length > 0 ? modType + "." : "";
   const fileName = `vortex.deployment.${typeTag}json`;
   return {

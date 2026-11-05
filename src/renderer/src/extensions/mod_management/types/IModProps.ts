@@ -8,4 +8,21 @@ export interface IModProps {
   downloads: { [downloadId: string]: IDownload };
 }
 
-export type IModWithState = IMod & IProfileMod;
+export type ModInstallationState = "ok" | "empty" | "missing";
+
+/** The mod's row status, which can differ from its enabled flag when its files are gone. */
+export type ModStatus =
+  | "error"
+  | "enabled"
+  | "disabled"
+  | "uninstalled"
+  | "neverinstalled"
+  | "installing";
+
+export type IModWithState = IMod &
+  IProfileMod & {
+    /** Whether the staging folder was found and has any entries. */
+    installationState?: ModInstallationState;
+    /** The status the table shows; kept in sync with installationState and deployments. */
+    status?: ModStatus;
+  };

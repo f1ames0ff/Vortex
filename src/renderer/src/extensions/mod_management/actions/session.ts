@@ -33,6 +33,11 @@ export interface IDeploymentFailure {
   relPath: string;
   /** absolute path of the file in the game directory, for revealing it */
   outputPath: string;
+  /**
+   * Why the deployment engine could not place this file. Optional because
+   * older paths (and some filesystem errors) only know that it failed.
+   */
+  message?: string;
 }
 
 /** Replaces the files a deployment couldn't place. */

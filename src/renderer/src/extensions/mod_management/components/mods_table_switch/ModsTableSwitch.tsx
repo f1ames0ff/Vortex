@@ -211,12 +211,16 @@ export const ModsTableSwitch = ({
           if (mod.state === "installing") {
             return t("Installing");
           }
+          if (mod.status === "error") {
+            return t("Error");
+          }
           return isEnabled(mod) ? t("Enabled") : t("Disabled");
         },
         groupOrder: [
           t("Never installed"),
           t("Uninstalled"),
           t("Installing"),
+          t("Error"),
           t("Enabled"),
           t("Disabled"),
         ],

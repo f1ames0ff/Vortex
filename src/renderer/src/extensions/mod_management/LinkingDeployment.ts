@@ -54,7 +54,11 @@ async function backUpGameFile(filePath: string): Promise<void> {
     return;
   }
   if (!(await isAbsent(backupPath))) {
-    throw new Error(`"${backupPath}" already exists`);
+    throw new Error(
+      `Cannot back up "${filePath}": "${backupPath}" already exists and the current ` +
+        `file is not a hardlink to the staged file. Remove the stale backup or ` +
+        `resolve the file manually.`,
+    );
   }
   // the util/fs rename keeps the busy-retry and elevated-unlock handling a locked game file needs
   await fs.renameAsync(filePath, backupPath);
@@ -228,12 +232,13 @@ abstract class LinkingActivator implements IDeploymentMethod {
     const dirTags = directoryCleaning === "tag";
 
     const failures: IDeploymentFailure[] = [];
-    const recordFailure = (file: IDeployedFile | undefined) => {
+    const recordFailure = (file: IDeployedFile | undefined, err?: unknown) => {
       if (file === undefined) return;
       failures.push({
         source: file.source,
         relPath: file.relPath,
         outputPath: path.join(dataPath, file.target || "", file.relPath),
+        message: err === undefined ? undefined : getErrorMessageOrDefault(err),
       });
     };
 
@@ -242,7 +247,7 @@ abstract class LinkingActivator implements IDeploymentMethod {
         link: file?.relPath,
         error: getErrorMessageOrDefault(err),
       });
-      recordFailure(file);
+      recordFailure(file, err);
     };
 
     return (
@@ -256,7 +261,7 @@ abstract class LinkingActivator implements IDeploymentMethod {
               link: file?.relPath,
               error: getErrorMessageOrDefault(err),
             });
-            recordFailure(file);
+            recordFailure(file, err);
           }),
         50,
       )
@@ -289,7 +294,7 @@ abstract class LinkingActivator implements IDeploymentMethod {
                   if (getErrorCode(err) !== "ENOENT") {
                     // if the source file doesn't exist it must have been deleted
                     // in the mean time. That's not really our problem.
-                    recordFailure(context.newDeployment[key]);
+                    recordFailure(context.newDeployment[key], err);
                   }
                 })
                 .then(() => progress()),
@@ -309,7 +314,7 @@ abstract class LinkingActivator implements IDeploymentMethod {
                     error: getErrorMessageOrDefault(err),
                   });
                   if (getErrorCode(err) !== "ENOENT") {
-                    recordFailure(context.newDeployment[key]);
+                    recordFailure(context.newDeployment[key], err);
                   }
                 })
                 .then(() => progress()),

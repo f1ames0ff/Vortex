@@ -566,6 +566,16 @@ div:hover > .hover-expand {
     }
 }
 
+.btn-mods-enabled-error,
+.toggle-mods-enabled-error {
+    background-color: $brand-danger;
+
+    &:hover,
+    &:focus {
+        background-color: color.adjust($brand-danger, $lightness: -10%);
+    }
+}
+
 .btn-mods-enabled-disabled,
 .toggle-mods-enabled-disabled,
 .btn-extensions-enabled-disabled,
