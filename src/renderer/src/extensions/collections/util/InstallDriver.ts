@@ -2,6 +2,7 @@ import * as path from "path";
 
 import type * as nexusApi from "@nexusmods/nexus-api";
 import { getErrorMessageOrDefault } from "@vortex/shared";
+import type { NativeCollectionJobStatus } from "@vortex/shared/ipc";
 import Bluebird from "bluebird";
 
 import * as installActions from "../../../actions/collectionInstallTracking";
@@ -12,6 +13,7 @@ import type { IState } from "../../../types/IState";
 import {
   generateCollectionSessionId,
   isTerminalMemberStatus,
+  modRuleId,
 } from "../../../util/collectionInstallSession";
 import {
   getCollectionActiveSession,
@@ -36,7 +38,13 @@ import type { IMod, IModRule } from "../../mod_management/types/IMod";
 import { findModByRef } from "../../mod_management/util/findModByRef";
 import renderModName from "../../mod_management/util/modName";
 import { appendModReferenceTagsActions } from "../../mod_management/util/modReferenceTags";
-import { planCollectionNatively } from "../../mod_management/util/nativeDeploy";
+import {
+  cancelCollectionJobNatively,
+  pauseCollectionJobNatively,
+  planCollectionNatively,
+  startCollectionNatively,
+  updateCollectionMemberNatively,
+} from "../../mod_management/util/nativeDeploy";
 import testModReference, {
   isDependencyRule,
   isOptionalRule,
@@ -118,6 +126,11 @@ class InstallDriver {
     false,
     true,
   );
+
+  // Core-owned phase queue, mirroring member statuses while the TypeScript
+  // install executor performs the actual downloads/installs.
+  private mNativeJobId: string | undefined;
+  private mNativeJobStatus: NativeCollectionJobStatus | undefined;
 
   // Collection installation tracking
   private mCurrentSessionId: string;
@@ -290,6 +303,18 @@ class InstallDriver {
             installSpec.patches,
           );
         }
+      }
+
+      if (this.mNativeJobId !== undefined && mod !== undefined && dependent !== undefined) {
+        void updateCollectionMemberNatively(this.mNativeJobId, modRuleId(dependent), "installed", {
+          modId: mod.id,
+        })
+          .then((status) => {
+            if (status !== undefined) {
+              this.mNativeJobStatus = status;
+            }
+          })
+          .catch(() => undefined);
       }
       this.triggerUpdate();
     });
@@ -651,6 +676,9 @@ class InstallDriver {
     if (this.mCollection === undefined || this.mGameId === undefined) {
       return false;
     }
+    if (this.mNativeJobId !== undefined && this.mNativeJobStatus?.complete === true) {
+      return true;
+    }
     const session = getCollectionActiveSession(this.mApi.getState());
     if (session === undefined || session.collectionId !== this.mCollection.id) {
       // no active session for this collection - nothing we can assert as complete
@@ -768,6 +796,16 @@ class InstallDriver {
     context: CollectionInstallOutcomeContext = {},
   ) {
     this.mPostprocessing = false;
+    if (this.mNativeJobId !== undefined) {
+      const jobId = this.mNativeJobId;
+      this.mNativeJobId = undefined;
+      this.mNativeJobStatus = undefined;
+      void (
+        outcome === "paused"
+          ? pauseCollectionJobNatively(jobId)
+          : cancelCollectionJobNatively(jobId)
+      ).catch(() => undefined);
+    }
     if (this.mCollection !== undefined) {
       this.mApi.dismissNotification(INSTALLING_NOTIFICATION_ID + this.mCollection.id);
 
@@ -946,6 +984,23 @@ class InstallDriver {
             return accum;
           }, []);
     this.setDependentMods(dependencies);
+
+    this.mNativeJobId = undefined;
+    this.mNativeJobStatus = undefined;
+    if (nativePlan !== undefined) {
+      try {
+        const started = await startCollectionNatively(collection.id, gameId, nativePlan.members, {
+          concurrency: 5,
+        });
+        this.mNativeJobId = started?.jobId;
+        this.mNativeJobStatus = started?.status;
+      } catch (err) {
+        log("warn", "failed to start native collection queue", {
+          collectionId: collection.id,
+          error: getErrorMessageOrDefault(err),
+        });
+      }
+    }
     // log('debug', 'dependent mods', JSON.stringify(dependencies));
 
     /* COLLECTIONS START ANALYTICS */
@@ -1124,6 +1179,12 @@ class InstallDriver {
         ? "completed"
         : "failed";
     this.completeInstallationTracking(outcome);
+    if (this.mNativeJobId !== undefined) {
+      const jobId = this.mNativeJobId;
+      this.mNativeJobId = undefined;
+      this.mNativeJobStatus = undefined;
+      void cancelCollectionJobNatively(jobId).catch(() => undefined);
+    }
     this.mCollection = undefined;
     this.setDependentMods([]);
     this.mInstallDone = true;

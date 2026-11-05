@@ -5,6 +5,8 @@ import path from "node:path";
 import type {
   NativeArchiveExtractRequest,
   NativeArchiveListRequest,
+  NativeCollectionMemberUpdate,
+  NativeCollectionStartRequest,
   NativeDepsRequest,
   NativeDeployRequest,
   NativePluginOrderRequest,
@@ -119,6 +121,32 @@ export function initNativeDeployIpc(): void {
     "nativeDeploy:pluginsOrderWrite",
     (_event, request: NativePluginOrderWriteRequest) =>
       nativeCoreClient().pluginsOrderWrite(request),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:collectionStart",
+    (_event, request: NativeCollectionStartRequest) => nativeCoreClient().collectionStart(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:collectionStatus", (_event, jobId: string) =>
+    nativeCoreClient().collectionStatus(jobId),
+  );
+
+  betterIpcMain.handle("nativeDeploy:collectionNext", (_event, jobId: string) =>
+    nativeCoreClient().collectionNext(jobId),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:collectionMember",
+    (_event, request: NativeCollectionMemberUpdate) => nativeCoreClient().collectionMember(request),
+  );
+
+  betterIpcMain.handle("nativeDeploy:collectionPause", (_event, jobId: string) =>
+    nativeCoreClient().collectionPause(jobId),
+  );
+
+  betterIpcMain.handle("nativeDeploy:collectionCancel", (_event, jobId: string) =>
+    nativeCoreClient().collectionCancel(jobId),
   );
 }
 

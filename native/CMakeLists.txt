@@ -38,6 +38,7 @@ find_package(Threads REQUIRED)
 
 add_library(vortex_core
     src/archive.cpp
+    src/collection.cpp
     src/deps.cpp
     src/hash.cpp
     src/install.cpp

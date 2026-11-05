@@ -97,6 +97,30 @@ export class VortexCoreClient {
     return this.request("plugins.loadOrder.write", request);
   }
 
+  collectionStart(request) {
+    return this.request("collection.start", request);
+  }
+
+  collectionStatus(jobId) {
+    return this.request("collection.status", { jobId });
+  }
+
+  collectionNext(jobId) {
+    return this.request("collection.next", { jobId });
+  }
+
+  collectionMember(request) {
+    return this.request("collection.member", request);
+  }
+
+  collectionPause(jobId) {
+    return this.request("collection.pause", { jobId });
+  }
+
+  collectionCancel(jobId) {
+    return this.request("collection.cancel", { jobId });
+  }
+
   request(method, params = {}) {
     const id = this.#nextId++;
     const request = { id, method, params };

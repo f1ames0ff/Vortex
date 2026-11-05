@@ -64,6 +64,14 @@ try {
         betterIpcRenderer.invoke("nativeDeploy:pluginsOrderRead", request),
       pluginsOrderWrite: (request) =>
         betterIpcRenderer.invoke("nativeDeploy:pluginsOrderWrite", request),
+      collectionStart: (request) =>
+        betterIpcRenderer.invoke("nativeDeploy:collectionStart", request),
+      collectionStatus: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionStatus", jobId),
+      collectionNext: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionNext", jobId),
+      collectionMember: (request) =>
+        betterIpcRenderer.invoke("nativeDeploy:collectionMember", request),
+      collectionPause: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionPause", jobId),
+      collectionCancel: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionCancel", jobId),
     },
 
     shell: {

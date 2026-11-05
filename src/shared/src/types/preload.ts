@@ -39,7 +39,12 @@ import type {
   NativeArchiveExtractResult,
   NativeArchiveListRequest,
   NativeArchiveListResult,
+  NativeCollectionJobStatus,
+  NativeCollectionMemberUpdate,
+  NativeCollectionNextResult,
   NativeCollectionPlan,
+  NativeCollectionStartRequest,
+  NativeCollectionStartResult,
   NativeDepsRequest,
   NativeDepsResolveResult,
   NativeDeployPlanSummary,
@@ -662,6 +667,24 @@ export interface NativeDeployApi {
 
   /** Writes plugins.txt/loadorder.txt through the core. */
   pluginsOrderWrite(request: NativePluginOrderWriteRequest): Promise<NativePluginOrderResult>;
+
+  /** Creates a core-owned collection phase queue. */
+  collectionStart(request: NativeCollectionStartRequest): Promise<NativeCollectionStartResult>;
+
+  /** Reads the current collection job snapshot. */
+  collectionStatus(jobId: string): Promise<NativeCollectionJobStatus>;
+
+  /** Asks the core for the next runnable members and marks them queued. */
+  collectionNext(jobId: string): Promise<NativeCollectionNextResult>;
+
+  /** Updates one member and returns the advanced snapshot. */
+  collectionMember(request: NativeCollectionMemberUpdate): Promise<NativeCollectionJobStatus>;
+
+  /** Pauses scheduling for a collection job. */
+  collectionPause(jobId: string): Promise<NativeCollectionJobStatus>;
+
+  /** Cancels a collection job. */
+  collectionCancel(jobId: string): Promise<NativeCollectionJobStatus>;
 }
 
 export interface FeatureFlagsApi {

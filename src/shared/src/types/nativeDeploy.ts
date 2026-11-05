@@ -373,3 +373,61 @@ export interface NativePluginOrderWriteRequest extends NativePluginOrderRequest 
   plugins: string[];
   loadOrder: string[];
 }
+
+export interface NativeCollectionJobMember {
+  ruleIndex: number;
+  ruleId: string;
+  type: string;
+  phase: number;
+  ignored: boolean;
+  status: string;
+  modId?: string;
+  downloadId?: string;
+  error?: string;
+  attempts?: number;
+}
+
+export interface NativeCollectionJobStatus {
+  jobId: string;
+  collectionId: string;
+  gameId: string;
+  phase: number;
+  phases: number[];
+  members: NativeCollectionJobMember[];
+  counts: Record<string, number>;
+  complete: boolean;
+  paused: boolean;
+  cancelled: boolean;
+  stalled: boolean;
+  startedAt: number;
+  lastProgress: number;
+}
+
+export interface NativeCollectionStartRequest {
+  collectionId: string;
+  gameId: string;
+  concurrency?: number;
+  maxRetries?: number;
+  stallMs?: number;
+  members: NativeCollectionJobMember[];
+}
+
+export interface NativeCollectionStartResult {
+  jobId: string;
+  status: NativeCollectionJobStatus;
+}
+
+export interface NativeCollectionNextResult {
+  members: NativeCollectionJobMember[];
+  status: NativeCollectionJobStatus;
+}
+
+export interface NativeCollectionMemberUpdate {
+  jobId: string;
+  ruleId: string;
+  status: string;
+  modId?: string;
+  downloadId?: string;
+  error?: string;
+  retry?: boolean;
+}

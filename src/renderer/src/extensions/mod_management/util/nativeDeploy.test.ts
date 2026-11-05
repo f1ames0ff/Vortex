@@ -33,17 +33,23 @@ vi.mock("../../../util/fs", () => ({
 
 import {
   applyInstallNatively,
+  cancelCollectionJobNatively,
   canDeployNatively,
+  collectionStatusNatively,
   deployWithNativeCore,
   extractArchiveNatively,
   hashFilesNatively,
   inspectStagingNatively,
+  nextCollectionMembersNatively,
+  pauseCollectionJobNatively,
   planCollectionNatively,
   purgeWithNativeCore,
   readPluginOrderNatively,
   resetNativeDeployStatus,
   resolveDependenciesNatively,
   scanPluginsNatively,
+  startCollectionNatively,
+  updateCollectionMemberNatively,
   writePluginOrderNatively,
 } from "./nativeDeploy";
 
@@ -62,6 +68,12 @@ interface FakeNativeDeploy {
   pluginsScan: ReturnType<typeof vi.fn>;
   pluginsOrderRead: ReturnType<typeof vi.fn>;
   pluginsOrderWrite: ReturnType<typeof vi.fn>;
+  collectionStart: ReturnType<typeof vi.fn>;
+  collectionStatus: ReturnType<typeof vi.fn>;
+  collectionNext: ReturnType<typeof vi.fn>;
+  collectionMember: ReturnType<typeof vi.fn>;
+  collectionPause: ReturnType<typeof vi.fn>;
+  collectionCancel: ReturnType<typeof vi.fn>;
 }
 
 let nativeDeploy: FakeNativeDeploy;
@@ -99,6 +111,12 @@ beforeEach(() => {
     pluginsScan: vi.fn(),
     pluginsOrderRead: vi.fn(),
     pluginsOrderWrite: vi.fn(),
+    collectionStart: vi.fn(),
+    collectionStatus: vi.fn(),
+    collectionNext: vi.fn(),
+    collectionMember: vi.fn(),
+    collectionPause: vi.fn(),
+    collectionCancel: vi.fn(),
   };
   installApi(nativeDeploy);
   resetNativeDeployStatus();
@@ -516,5 +534,66 @@ describe("native staging adapter", () => {
     });
     expect(written?.pluginsFile).toBe("plugins.txt");
     expect(read?.loadOrder).toEqual(["Skyrim.esm"]);
+  });
+
+  it("starts and advances a collection job in the core", async () => {
+    nativeDeploy.collectionStart.mockResolvedValue({ jobId: "job-1", status: {} } as never);
+    nativeDeploy.collectionNext.mockResolvedValue({
+      members: [{ ruleId: "requires_a" }],
+      status: {},
+    } as never);
+    nativeDeploy.collectionMember.mockResolvedValue({} as never);
+    nativeDeploy.collectionStatus.mockResolvedValue({ complete: false } as never);
+    nativeDeploy.collectionPause.mockResolvedValue({} as never);
+    nativeDeploy.collectionCancel.mockResolvedValue({} as never);
+
+    const started = await startCollectionNatively(
+      "collection",
+      "skyrimse",
+      [
+        {
+          ruleIndex: 0,
+          ruleId: "requires_a",
+          type: "requires",
+          phase: 1,
+          ignored: false,
+          status: "pending",
+        },
+      ],
+      { concurrency: 2 },
+    );
+    expect(started?.jobId).toBe("job-1");
+
+    const next = await nextCollectionMembersNatively("job-1");
+    expect(next?.members[0].ruleId).toBe("requires_a");
+
+    await updateCollectionMemberNatively("job-1", "requires_a", "installed", {
+      modId: "mod-a",
+    });
+    await collectionStatusNatively("job-1");
+    await pauseCollectionJobNatively("job-1");
+    await cancelCollectionJobNatively("job-1");
+
+    expect(nativeDeploy.collectionStart).toHaveBeenCalledWith({
+      collectionId: "collection",
+      gameId: "skyrimse",
+      concurrency: 2,
+      members: [
+        {
+          ruleIndex: 0,
+          ruleId: "requires_a",
+          type: "requires",
+          phase: 1,
+          ignored: false,
+          status: "pending",
+        },
+      ],
+    });
+    expect(nativeDeploy.collectionMember).toHaveBeenCalledWith({
+      jobId: "job-1",
+      ruleId: "requires_a",
+      status: "installed",
+      modId: "mod-a",
+    });
   });
 });

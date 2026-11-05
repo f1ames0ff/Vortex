@@ -208,6 +208,85 @@ test("scans plugins and reads/writes the load order", async () => {
   assert.deepEqual(read.loadOrder, ["Skyrim.esm", "Mod.esp"]);
 });
 
+test("runs a collection phase queue", async () => {
+  const member = (ruleIndex, ruleId, type, phase, ignored = false, status = "pending") => ({
+    ruleIndex,
+    ruleId,
+    type,
+    phase,
+    ignored,
+    status,
+  });
+  const started = await client.collectionStart({
+    collectionId: "collection",
+    gameId: "skyrimse",
+    concurrency: 1,
+    members: [
+      member(0, "requires_a", "requires", 1),
+      member(1, "requires_b", "requires", 1),
+      member(2, "requires_c", "requires", 2),
+      member(3, "recommends_d", "recommends", 666),
+      member(4, "requires_ignored", "requires", 1, true, "ignored"),
+    ],
+  });
+  assert.ok(started.jobId);
+
+  let next = await client.collectionNext(started.jobId);
+  assert.deepEqual(
+    next.members.map((entry) => entry.ruleId),
+    ["requires_a"],
+  );
+  await client.collectionMember({
+    jobId: started.jobId,
+    ruleId: "requires_a",
+    status: "installed",
+    modId: "mod-a",
+  });
+
+  next = await client.collectionNext(started.jobId);
+  assert.deepEqual(
+    next.members.map((entry) => entry.ruleId),
+    ["requires_b"],
+  );
+  await client.collectionMember({
+    jobId: started.jobId,
+    ruleId: "requires_b",
+    status: "installed",
+    modId: "mod-b",
+  });
+
+  next = await client.collectionNext(started.jobId);
+  assert.deepEqual(
+    next.members.map((entry) => entry.ruleId),
+    ["requires_c"],
+  );
+  await client.collectionMember({
+    jobId: started.jobId,
+    ruleId: "requires_c",
+    status: "installed",
+    modId: "mod-c",
+  });
+
+  next = await client.collectionNext(started.jobId);
+  assert.deepEqual(
+    next.members.map((entry) => entry.ruleId),
+    ["recommends_d"],
+  );
+  const done = await client.collectionMember({
+    jobId: started.jobId,
+    ruleId: "recommends_d",
+    status: "installed",
+    modId: "mod-d",
+  });
+  assert.equal(done.complete, true);
+  assert.equal(done.counts.installed, 4);
+  assert.equal(done.counts.ignored, 1);
+
+  await client.collectionPause(started.jobId);
+  assert.deepEqual((await client.collectionNext(started.jobId)).members, []);
+  await client.collectionCancel(started.jobId);
+});
+
 test("lists and extracts archives through 7-Zip", { skip: !existsSync(sevenZip) }, async () => {
   const archive = join(root, "sample.zip");
   execFileSync(sevenZip, ["a", "-tzip", archive, "a.txt"], {

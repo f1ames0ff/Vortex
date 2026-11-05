@@ -30,7 +30,12 @@ import type {
   NativeArchiveExtractResult,
   NativeArchiveListRequest,
   NativeArchiveListResult,
+  NativeCollectionJobStatus,
+  NativeCollectionMemberUpdate,
+  NativeCollectionNextResult,
   NativeCollectionPlan,
+  NativeCollectionStartRequest,
+  NativeCollectionStartResult,
   NativeDepsRequest,
   NativeDepsResolveResult,
   NativeDeployPlanSummary,
@@ -430,6 +435,16 @@ export interface InvokeChannels {
   "nativeDeploy:pluginsOrderWrite": (
     request: NativePluginOrderWriteRequest,
   ) => Promise<NativePluginOrderResult>;
+  "nativeDeploy:collectionStart": (
+    request: NativeCollectionStartRequest,
+  ) => Promise<NativeCollectionStartResult>;
+  "nativeDeploy:collectionStatus": (jobId: string) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionNext": (jobId: string) => Promise<NativeCollectionNextResult>;
+  "nativeDeploy:collectionMember": (
+    request: NativeCollectionMemberUpdate,
+  ) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionPause": (jobId: string) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionCancel": (jobId: string) => Promise<NativeCollectionJobStatus>;
 
   // bsdiff binary patching, run on a main-process worker_thread (only paths cross IPC)
   "bsdiff:create": (oldPath: string, newPath: string, patchPath: string) => Promise<void>;

@@ -5,6 +5,7 @@
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
 #include "vortex/core/archive.hpp"
+#include "vortex/core/collection.hpp"
 #include "vortex/core/deps.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
@@ -38,6 +39,7 @@ struct Request {
 
 struct CoreState {
     std::map<std::string, std::unique_ptr<IndexStore>> indexes;
+    vortex::core::CollectionJobs collectionJobs;
 };
 
 IndexStore& indexFor(CoreState& state, const fs::path& stagingPath) {
@@ -561,6 +563,55 @@ json dependenciesJson(const std::vector<vortex::core::DependencyEntry>& entries)
     return result;
 }
 
+json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
+    json value = {
+        {"ruleIndex", member.ruleIndex},
+        {"ruleId", member.ruleId},
+        {"type", member.type},
+        {"phase", member.phase},
+        {"ignored", member.ignored},
+        {"status", member.status},
+        {"attempts", member.attempts},
+    };
+    if (member.modId.has_value()) {
+        value["modId"] = *member.modId;
+    }
+    if (member.downloadId.has_value()) {
+        value["downloadId"] = *member.downloadId;
+    }
+    if (!member.error.empty()) {
+        value["error"] = member.error;
+    }
+    return value;
+}
+
+std::vector<vortex::core::CollectionMemberState> readCollectionMembers(const json& params) {
+    if (!params.contains("members") || !params["members"].is_array()) {
+        throw std::runtime_error("params.members must be an array");
+    }
+    std::vector<vortex::core::CollectionMemberState> members;
+    members.reserve(params["members"].size());
+    for (const auto& item : params["members"]) {
+        if (!item.is_object()) {
+            throw std::runtime_error("each collection member must be an object");
+        }
+        vortex::core::CollectionMemberState member;
+        member.ruleIndex = item.value("ruleIndex", 0);
+        member.ruleId = item.value("ruleId", std::string{});
+        member.type = item.value("type", std::string{});
+        member.phase = item.value("phase", 0);
+        member.ignored = item.value("ignored", false);
+        member.status = item.value("status", std::string("pending"));
+        member.modId = optString(item, "modId");
+        member.downloadId = optString(item, "downloadId");
+        if (member.ruleId.empty()) {
+            throw std::runtime_error("collection member.ruleId is required");
+        }
+        members.push_back(std::move(member));
+    }
+    return members;
+}
+
 json collectionPlanJson(const vortex::core::CollectionPlan& plan) {
     json phases = json::array();
     for (const auto phase : plan.phases) {
@@ -584,9 +635,10 @@ json dispatch(CoreState& state, const Request& request) {
             {"capabilities",
              {"ping", "scan", "staging.status", "install.apply", "game.registry",
               "archive.list", "archive.extract", "hash.files", "deps.matchMod",
-              "deps.matchDownload", "deps.resolve", "collection.plan", "plugins.scan",
-              "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
-              "deploy.symlink", "purge"}},
+              "deps.matchDownload", "deps.resolve", "collection.plan", "collection.start",
+              "collection.status", "collection.next", "collection.member", "collection.pause",
+              "collection.cancel", "plugins.scan", "plugins.loadOrder.read",
+              "plugins.loadOrder.write", "plan", "deploy", "deploy.symlink", "purge"}},
             {"pid", 0},
         };
     }
@@ -705,6 +757,68 @@ json dispatch(CoreState& state, const Request& request) {
         }
         const auto plan = vortex::core::planCollection(rules, mods, downloads);
         return collectionPlanJson(plan);
+    }
+
+    if (request.method == "collection.start") {
+        vortex::core::CollectionJob job;
+        job.collectionId = params.value("collectionId", std::string{});
+        job.gameId = params.value("gameId", std::string{});
+        job.concurrency = params.value("concurrency", 5);
+        job.maxRetries = params.value("maxRetries", 3);
+        job.stallMs = params.value("stallMs", 60000);
+        job.members = readCollectionMembers(params);
+        const auto jobId = state.collectionJobs.start(std::move(job));
+        const auto* started = state.collectionJobs.find(jobId);
+        return {
+            {"jobId", jobId},
+            {"status", vortex::core::CollectionJobs::status(*started)},
+        };
+    }
+
+    if (request.method == "collection.status" || request.method == "collection.next" ||
+        request.method == "collection.pause" || request.method == "collection.cancel" ||
+        request.method == "collection.member") {
+        const auto jobId = params.value("jobId", std::string{});
+        if (jobId.empty()) {
+            throw std::runtime_error("params.jobId is required");
+        }
+        auto* job = state.collectionJobs.find(jobId);
+        if (job == nullptr) {
+            throw std::runtime_error("unknown collection job: " + jobId);
+        }
+
+        if (request.method == "collection.status") {
+            return vortex::core::CollectionJobs::status(*job);
+        }
+        if (request.method == "collection.pause") {
+            state.collectionJobs.pause(jobId);
+            return vortex::core::CollectionJobs::status(*job);
+        }
+        if (request.method == "collection.cancel") {
+            state.collectionJobs.cancel(jobId);
+            return vortex::core::CollectionJobs::status(*job);
+        }
+        if (request.method == "collection.member") {
+            vortex::core::CollectionMemberUpdate update;
+            update.ruleId = params.value("ruleId", std::string{});
+            update.status = params.value("status", std::string{});
+            update.modId = optString(params, "modId");
+            update.downloadId = optString(params, "downloadId");
+            update.error = params.value("error", std::string{});
+            update.retry = params.value("retry", false);
+            state.collectionJobs.update(jobId, update);
+            return vortex::core::CollectionJobs::status(*job);
+        }
+
+        const auto selected = state.collectionJobs.next(jobId);
+        json members = json::array();
+        for (const auto& member : selected) {
+            members.push_back(collectionMemberJson(member));
+        }
+        return {
+            {"members", std::move(members)},
+            {"status", vortex::core::CollectionJobs::status(*job)},
+        };
     }
 
     if (request.method == "scan") {

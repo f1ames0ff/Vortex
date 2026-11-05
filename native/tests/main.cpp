@@ -5,6 +5,7 @@
 #include "vortex/deployment/platform.hpp"
 #include "vortex/deployment/planner.hpp"
 #include "vortex/core/archive.hpp"
+#include "vortex/core/collection.hpp"
 #include "vortex/core/deps.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
@@ -575,6 +576,84 @@ void testArchiveListAndExtract() {
 #endif
 }
 
+void testCollectionJobQueue() {
+    vortex::core::CollectionJob job;
+    job.collectionId = "collection";
+    job.gameId = "skyrimse";
+    job.concurrency = 1;
+    job.members = {
+        {0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0},
+        {1, "requires_b", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0},
+        {2, "requires_c", "requires", 2, false, "pending", std::nullopt, std::nullopt, "", 0},
+        {3, "recommends_d", "recommends", 666, false, "pending", std::nullopt, std::nullopt, "", 0},
+        {4, "requires_ignored", "requires", 1, true, "ignored", std::nullopt, std::nullopt, "", 0},
+    };
+
+    vortex::core::CollectionJobs jobs;
+    const auto id = jobs.start(job);
+    check(!id.empty(), "collection job id");
+
+    auto first = jobs.next(id);
+    check(first.size() == 1 && first[0].ruleId == "requires_a", "first phase member");
+    jobs.update(id, {"requires_a", "installed", "mod-a", std::nullopt, "", false});
+
+    auto second = jobs.next(id);
+    check(second.size() == 1 && second[0].ruleId == "requires_b", "second phase member");
+    jobs.update(id, {"requires_b", "installed", "mod-b", std::nullopt, "", false});
+
+    auto third = jobs.next(id);
+    check(third.size() == 1 && third[0].ruleId == "requires_c", "next phase member");
+    jobs.update(id, {"requires_c", "installed", "mod-c", std::nullopt, "", false});
+
+    auto fourth = jobs.next(id);
+    check(fourth.size() == 1 && fourth[0].ruleId == "recommends_d", "optional phase last");
+    jobs.update(id, {"recommends_d", "installed", "mod-d", std::nullopt, "", false});
+
+    const auto* finished = jobs.find(id);
+    check(finished != nullptr, "collection job exists");
+    const auto status = vortex::core::CollectionJobs::status(*finished);
+    check(status["complete"].get<bool>(), "collection job complete");
+    check(status["counts"]["installed"].get<std::size_t>() == 4, "installed count");
+    check(status["counts"]["ignored"].get<std::size_t>() == 1, "ignored count");
+
+    // Pause and cancel stop scheduling.
+    jobs.pause(id);
+    check(jobs.next(id).empty(), "paused job schedules nothing");
+    jobs.cancel(id);
+    check(jobs.next(id).empty(), "cancelled job schedules nothing");
+}
+
+void testCollectionJobRetryAndStall() {
+    vortex::core::CollectionJob job;
+    job.concurrency = 1;
+    job.maxRetries = 2;
+    job.stallMs = 0;
+    job.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0}};
+    vortex::core::CollectionJobs jobs;
+    const auto id = jobs.start(job);
+
+    check(jobs.next(id).size() == 1, "retry first attempt");
+    jobs.update(id, {"requires_a", "failed", std::nullopt, std::nullopt, "transient", true});
+    auto status = vortex::core::CollectionJobs::status(*jobs.find(id));
+    check(status["members"][0]["status"] == "pending", "failed member requeued");
+    check(status["members"][0]["attempts"] == 1, "retry attempt count");
+
+    check(jobs.next(id).size() == 1, "retry second attempt");
+    jobs.update(id, {"requires_a", "failed", std::nullopt, std::nullopt, "permanent", false});
+    status = vortex::core::CollectionJobs::status(*jobs.find(id));
+    check(status["members"][0]["status"] == "failed", "failed member terminal");
+    check(status["complete"].get<bool>(), "failed member completes the phase");
+
+    // A fresh job with no progress is reported as stalled once the threshold passes.
+    vortex::core::CollectionJob stalled;
+    stalled.stallMs = 0;
+    stalled.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0}};
+    const auto stalledId = jobs.start(stalled);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    const auto stalledStatus = vortex::core::CollectionJobs::status(*jobs.find(stalledId));
+    check(stalledStatus["stalled"].get<bool>(), "stalled job reported");
+}
+
 void testPluginScan() {
     const auto root = makeRoot("plugins-scan");
     writeFile(root / "Skyrim.esm", "esm");
@@ -988,6 +1067,8 @@ int main() {
         testCollectionPlan();
         testPluginScan();
         testPluginOrderCasingAndWrite();
+        testCollectionJobQueue();
+        testCollectionJobRetryAndStall();
         testTomlParsing();
         testGameDescriptorParsing();
         testMalformedToml();

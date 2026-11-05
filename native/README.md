@@ -60,7 +60,13 @@ Supported requests:
 {"id":16,"method":"plugins.scan","params":{"directories":[{"path":"/game/Data","extensions":[".esm",".esp",".esl"]}]}}
 {"id":17,"method":"plugins.loadOrder.read","params":{"directory":"/game/AppData"}}
 {"id":18,"method":"plugins.loadOrder.write","params":{"directory":"/game/AppData","plugins":["*Skyrim.esm"],"loadOrder":["Skyrim.esm"]}}
-{"id":19,"method":"shutdown","params":{}}
+{"id":19,"method":"collection.start","params":{"collectionId":"col","gameId":"skyrimse","concurrency":5,"members":[...]}}
+{"id":20,"method":"collection.next","params":{"jobId":"collection_..."}}
+{"id":21,"method":"collection.member","params":{"jobId":"collection_...","ruleId":"requires_...","status":"installed","modId":"ModA"}}
+{"id":22,"method":"collection.status","params":{"jobId":"collection_..."}}
+{"id":23,"method":"collection.pause","params":{"jobId":"collection_..."}}
+{"id":24,"method":"collection.cancel","params":{"jobId":"collection_..."}}
+{"id":25,"method":"shutdown","params":{}}
 ```
 
 Every response echoes `id` and contains either `result` or `error`. Commands
@@ -105,6 +111,16 @@ archive-name expressions, version ranges and install-spec equality.
 The matcher covers the common semver range forms (`^`, `~`, comparators,
 wildcards, `||`); hyphen ranges and full minimatch character classes are not
 implemented yet.
+
+`collection.start` turns a plan into a core-owned phase queue.
+`collection.next` returns up to the job's concurrency from the allowed phase
+and marks the selected members queued; TypeScript executors report progress
+back with `collection.member`. A phase advances only once every member is
+terminal (`installed`, `failed` or `ignored`), with `recommends` members in the
+trailing phase. `collection.status` exposes counts, completion, pause/cancel
+state and a stall flag based on the last progress timestamp. The queue lives in
+memory in the core; `InstallDriver` falls back to its own scheduling when the
+job cannot be created.
 
 `plugins.scan` scans top-level directories for the requested plugin
 extensions, preserving file-name casing while exposing the lower-case plugin
@@ -188,8 +204,9 @@ stay compatible with the old path.
 
 Collection resolution is also moving across: `gatherDependencies` asks
 `deps.resolve` for the top-level rule matches before its metadata lookups, and
-`InstallDriver` uses `collection.plan` to compute the missing-member set.
-Both keep the existing TypeScript resolver as the fallback when the flag is
+`InstallDriver` uses `collection.plan` to compute the missing-member set, then
+starts a `collection.start` phase queue and reports installed members back to
+it. Both keep the existing TypeScript resolver as the fallback when the flag is
 off or the core lacks the capability.
 
 The gamebryo plugin manager sends its Data-folder and enabled-mod directory
@@ -292,7 +309,7 @@ third_party/nlohmann/        vendored JSON header
 1. Add the Windows-specific hardlink/symlink, long-path and plugin-file
    backends and run the suite in a Windows CI runner.
 2. Route single-mod activation and move deployment through the core.
-3. Move collection phase execution, retries and the stall watchdog into the
-   core, leaving `InstallDriver` as a view model.
+3. Move the actual download/install executor behind `collection.next`
+   workers, leaving `InstallDriver` as a view model.
 4. Move downloads and the download queue into the core.
 5. Add the first-party module/plugin host on top of the game descriptors.

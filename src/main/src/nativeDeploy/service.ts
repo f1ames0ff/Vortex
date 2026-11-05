@@ -18,7 +18,12 @@ import type {
   NativeArchiveExtractResult,
   NativeArchiveListRequest,
   NativeArchiveListResult,
+  NativeCollectionJobStatus,
+  NativeCollectionMemberUpdate,
+  NativeCollectionNextResult,
   NativeCollectionPlan,
+  NativeCollectionStartRequest,
+  NativeCollectionStartResult,
   NativeDepsRequest,
   NativeDepsResolveResult,
   NativeDeployPlanSummary,
@@ -211,6 +216,30 @@ export class NativeCoreClient {
 
   pluginsOrderWrite(request: NativePluginOrderWriteRequest): Promise<NativePluginOrderResult> {
     return this.#request("plugins.loadOrder.write", request);
+  }
+
+  collectionStart(request: NativeCollectionStartRequest): Promise<NativeCollectionStartResult> {
+    return this.#request("collection.start", request);
+  }
+
+  collectionStatus(jobId: string): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.status", { jobId });
+  }
+
+  collectionNext(jobId: string): Promise<NativeCollectionNextResult> {
+    return this.#request("collection.next", { jobId });
+  }
+
+  collectionMember(request: NativeCollectionMemberUpdate): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.member", request);
+  }
+
+  collectionPause(jobId: string): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.pause", { jobId });
+  }
+
+  collectionCancel(jobId: string): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.cancel", { jobId });
   }
 
   /** Stop the core process and reject anything still in flight. */

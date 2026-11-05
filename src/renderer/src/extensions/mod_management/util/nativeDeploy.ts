@@ -8,7 +8,11 @@
 
 import { getErrorMessageOrDefault } from "@vortex/shared";
 import type {
+  NativeCollectionJobMember,
+  NativeCollectionJobStatus,
+  NativeCollectionNextResult,
   NativeCollectionPlan,
+  NativeCollectionStartResult,
   NativeDepsRequest,
   NativeDependencyEntry,
   NativeDeployRequest,
@@ -301,6 +305,85 @@ export async function writePluginOrderNatively(
     }
     throw err;
   }
+}
+
+/** Create a core-owned phase queue for a collection install. */
+export async function startCollectionNatively(
+  collectionId: string,
+  gameId: string,
+  members: NativeCollectionJobMember[],
+  options: { concurrency?: number; maxRetries?: number; stallMs?: number } = {},
+): Promise<NativeCollectionStartResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.start")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.collectionStart({
+      collectionId,
+      gameId,
+      members,
+      ...options,
+    });
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
+}
+
+export async function collectionStatusNatively(
+  jobId: string,
+): Promise<NativeCollectionJobStatus | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.status")) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.collectionStatus(jobId);
+}
+
+export async function nextCollectionMembersNatively(
+  jobId: string,
+): Promise<NativeCollectionNextResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.next")) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.collectionNext(jobId);
+}
+
+export async function updateCollectionMemberNatively(
+  jobId: string,
+  ruleId: string,
+  status: string,
+  details: { modId?: string; downloadId?: string; error?: string; retry?: boolean } = {},
+): Promise<NativeCollectionJobStatus | undefined> {
+  const native = await nativeDeployStatus();
+  if (!native.enabled || !native.available || !coreSupports(native, "collection.member")) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.collectionMember({ jobId, ruleId, status, ...details });
+}
+
+export async function pauseCollectionJobNatively(
+  jobId: string,
+): Promise<NativeCollectionJobStatus | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.pause")) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.collectionPause(jobId);
+}
+
+export async function cancelCollectionJobNatively(
+  jobId: string,
+): Promise<NativeCollectionJobStatus | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.cancel")) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.collectionCancel(jobId);
 }
 
 /**
