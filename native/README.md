@@ -69,6 +69,9 @@ Supported requests:
 {"id":23,"method":"collection.pause","params":{"jobId":"collection_..."}}
 {"id":24,"method":"collection.cancel","params":{"jobId":"collection_..."}}
 {"id":24,"method":"collection.run","params":{"jobId":"collection_..."}}
+{"id":24,"method":"module.load","params":{"path":"/modules/libmetadata.so"}}
+{"id":24,"method":"module.list","params":{}}
+{"id":24,"method":"module.call","params":{"module":"echo","method":"echo","params":{"value":42}}}
 {"id":25,"method":"download.add","params":{"directory":"/downloads","fileName":"ModA.7z","urls":["https://example.com/ModA.7z"],"maxRetries":3}}
 {"id":26,"method":"download.status","params":{"id":"download_..."}}
 {"id":27,"method":"download.pause","params":{"id":"download_..."}}
@@ -210,6 +213,20 @@ limit is configured, or a resume follows a core restart. Set
 `VORTEX_NATIVE_DOWNLOADS=0` to force the TypeScript path. Native downloads
 share the `VORTEX_NATIVE_DEPLOY=1` feature gate with the rest of the core.
 
+## C-ABI modules
+
+Shared libraries can expose `vortex_module_entry` returning a
+`vortex_module_v1` from `include/vortex/core/module_abi.h`. The ABI is
+versioned (`VORTEX_MODULE_ABI_VERSION`), carries a name/version and a single
+JSON-in/JSON-out `invoke` function, and owns result/error strings through
+`free_string`. The core loads modules with `module.load`, lists them with
+`module.list` and calls them with `module.call`.
+
+This is the boundary intended for domain code that must stay outside the core
+or be supplied as a plugin: metadata lookup adapters and a wrapper around the
+existing FOMOD/.NET host. The core does not embed the .NET FOMOD installer or
+the LevelDB metadata store.
+
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.
 
@@ -312,6 +329,9 @@ Known integration gaps for the next slice:
 - Single-mod activation and move deployment use the core when its
   `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
   back to the TypeScript activator.
+- The C-ABI module host is implemented; no FOMOD or metadata module ships with
+  it yet. FOMOD is still executed by `@nexusmods/fomod-installer-native`, and
+  metadata lookup by modmeta-db/Nexus API, both outside the core.
 - External-change detection is in the core for hardlink/symlink/move; the
   other deployment methods still use their TypeScript activator.
 - Downloads use the external `curl` binary. Linux distributions ship it;

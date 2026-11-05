@@ -11,6 +11,7 @@
 #include "vortex/core/download.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
+#include "vortex/core/module_host.hpp"
 #include "vortex/core/plugins.hpp"
 #include "vortex/core/status.hpp"
 #include "vortex/game/descriptor.hpp"
@@ -45,6 +46,7 @@ struct CoreState {
     // queue they reference is still alive.
     std::unique_ptr<vortex::core::DownloadQueue> downloads;
     vortex::core::CollectionJobs collectionJobs;
+    vortex::core::ModuleHost modules;
 
     vortex::core::DownloadQueue& downloadQueue() {
         if (downloads == nullptr) {
@@ -792,7 +794,7 @@ json dispatch(CoreState& state, const Request& request) {
               "deps.matchDownload", "deps.resolve", "collection.plan", "collection.start",
               "collection.status", "collection.next", "collection.member", "collection.pause",
               "collection.cancel", "collection.run", "collection.task",
-              "collection.execute", "download.queue", "plugins.scan",
+              "collection.execute", "module.abi", "download.queue", "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
               "deploy.symlink", "deploy.move", "deploy.single",
               "deployment.externalChanges", "purge"}},
@@ -1050,6 +1052,39 @@ json dispatch(CoreState& state, const Request& request) {
             {"members", std::move(members)},
             {"status", vortex::core::CollectionJobs::status(snapshot)},
         };
+    }
+
+    if (request.method == "module.load") {
+        const auto path = pathFromUtf8(params.value("path", std::string{}));
+        const auto info = state.modules.load(path);
+        return {
+            {"name", info.name},
+            {"version", info.version},
+            {"path", info.path.string()},
+        };
+    }
+
+    if (request.method == "module.list") {
+        json modules = json::array();
+        for (const auto& info : state.modules.list()) {
+            modules.push_back({
+                {"name", info.name},
+                {"version", info.version},
+                {"path", info.path.string()},
+            });
+        }
+        return {{"modules", std::move(modules)}};
+    }
+
+    if (request.method == "module.call") {
+        const auto name = params.value("module", std::string{});
+        const auto method = params.value("method", std::string{});
+        if (name.empty() || method.empty()) {
+            throw std::runtime_error("params.module and params.method are required");
+        }
+        const auto arguments = params.value("params", json::object());
+        const auto result = state.modules.call(name, method, arguments.dump());
+        return {{"result", json::parse(result)}};
     }
 
     if (request.method == "scan") {

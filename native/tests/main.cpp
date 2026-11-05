@@ -11,6 +11,7 @@
 #include "vortex/core/download.hpp"
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
+#include "vortex/core/module_host.hpp"
 #include "vortex/core/plugins.hpp"
 #include "vortex/core/process.hpp"
 #include "vortex/core/status.hpp"
@@ -882,6 +883,39 @@ void testCollectionJobRetryAndStall() {
     check(stalledStatus["stalled"].get<bool>(), "stalled job reported");
 }
 
+void testModuleHost() {
+#ifdef VORTEX_TEST_ECHO_MODULE
+    vortex::core::ModuleHost host;
+    const auto info = host.load(fs::path(VORTEX_TEST_ECHO_MODULE));
+    check(info.name == "echo", "module name");
+    check(info.version == "1.0.0", "module version");
+    check(host.contains("echo"), "module is registered");
+    check(host.list().size() == 1, "module list count");
+
+    const auto echoed = host.call("echo", "echo", R"({"value":42})");
+    check(echoed == R"({"value":42})", "module echo result");
+    const auto described = host.call("echo", "meta.describe", "{}");
+    check(described.find("\"module\":\"echo\"") != std::string::npos,
+          "module describe result");
+
+    bool rejected = false;
+    try {
+        host.call("echo", "missing", "{}");
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected, "module error is propagated");
+
+    bool unknownRejected = false;
+    try {
+        host.call("missing", "echo", "{}");
+    } catch (const std::exception&) {
+        unknownRejected = true;
+    }
+    check(unknownRejected, "unknown module is rejected");
+#endif
+}
+
 void testCollectionRun() {
 #ifdef VORTEX_7Z_PATH
     const auto root = makeRoot("collection-run");
@@ -1472,6 +1506,7 @@ int main() {
         testPluginOrderCasingAndWrite();
         testCollectionJobQueue();
         testCollectionJobRetryAndStall();
+        testModuleHost();
         testCollectionRun();
         testCollectionRunRetries();
         testDownloadValidation();

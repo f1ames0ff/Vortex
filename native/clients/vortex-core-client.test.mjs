@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 
 import { VortexCoreClient } from "./vortex-core-client.mjs";
@@ -729,4 +729,25 @@ test("attaches and executes a task on a collection member", async () => {
   assert.equal(executed.complete, true);
   assert.equal(executed.members[0].status, "installed", executed.members[0].error);
   assert.equal(readFileSync(join(destination, "b.txt"), "utf8"), "attached-content");
+});
+
+const echoModule =
+  process.env.VORTEX_MODULE_PATH ??
+  join(
+    dirname(corePath),
+    process.platform === "win32" ? "vortex_test_echo_module.dll" : "libvortex_test_echo_module.so",
+  );
+
+test("loads and calls a C-ABI module", { skip: !existsSync(echoModule) }, async () => {
+  const info = await client.moduleLoad(echoModule);
+  assert.equal(info.name, "echo");
+  assert.equal(info.version, "1.0.0");
+
+  const listed = await client.moduleList();
+  assert.ok(listed.modules.some((module) => module.name === "echo"));
+
+  const echoed = await client.moduleCall("echo", "echo", { value: 42 });
+  assert.deepEqual(echoed.result, { value: 42 });
+
+  await assert.rejects(client.moduleCall("echo", "missing", {}), /unknown echo-module method/);
 });

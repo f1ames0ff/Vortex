@@ -65,6 +65,18 @@ export class VortexCoreClient {
     return this.request("archive.extract", request);
   }
 
+  moduleLoad(modulePath) {
+    return this.request("module.load", { path: modulePath });
+  }
+
+  moduleList() {
+    return this.request("module.list", {});
+  }
+
+  moduleCall(module, method, params = {}) {
+    return this.request("module.call", { module, method, params });
+  }
+
   deploySingle(request) {
     return this.request("deploy.single", request);
   }
