@@ -1,4 +1,4 @@
-import { mkdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { readFile, writeFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
@@ -36,6 +36,7 @@ import { shutdownHashWorker } from "./hash/host";
 import { betterIpcMain } from "./ipc";
 import { log, setupLogging, changeLogPath } from "./logging";
 import MainWindow from "./MainWindow";
+import { shutdownNativeDeploy } from "./nativeDeploy/ipc";
 import { ReloadBudget } from "./reloadBudget";
 import SplashScreen from "./SplashScreen";
 import DuckDBSingleton from "./store/DuckDBSingleton";
@@ -54,6 +55,18 @@ import { isTelemetryEnabled, setTelemetryEnabled, setTelemetryInstanceId } from 
 import TrayIcon from "./TrayIcon";
 import { UnleashClient } from "./unleash/client";
 import { synchronizeFeatureFlags } from "./unleash/ipc";
+
+/**
+ * User-data directory used by the installed production app. The dev build's
+ * own userData lives under a different app name (`@vortex/main`), so this is
+ * the sibling directory Electron gives the packaged `Vortex` app.
+ */
+function productionUserDataPath(): string {
+  const appData = app.getPath("appData");
+  const preferred = path.join(appData, "Vortex");
+  const legacy = path.join(appData, "vortex");
+  return existsSync(preferred) || !existsSync(legacy) ? preferred : legacy;
+}
 
 /** test if the running version is a major downgrade (downgrading by a major or minor version,
 / everything except a patch) compared to what was running last */
@@ -154,6 +167,23 @@ class Application {
     const enableLogging =
       process.env.NODE_ENV === "development" || process.env.VORTEX_ENABLE_LOGGING === "1";
     setupLogging(app.getPath("userData"), enableLogging);
+
+    // The development build normally uses its own state. This opt-in makes it
+    // operate on the installed app's data instead, without passing a path:
+    //   VORTEX_PROD_DATA=1 pnpm run start
+    // An explicit value other than 1/true is treated as a user-data path.
+    const prodData = process.env.VORTEX_PROD_DATA;
+    if (
+      this.mArgs.userData === undefined &&
+      prodData !== undefined &&
+      prodData !== "" &&
+      prodData !== "0"
+    ) {
+      this.mArgs.userData =
+        prodData === "1" || prodData.toLowerCase() === "true" ? productionUserDataPath() : prodData;
+      log("info", "using production user data directory", { path: this.mArgs.userData });
+    }
+
     this.setupAppEvents(args);
   }
 
@@ -217,9 +247,11 @@ class Application {
           log("info", "clean application end");
           DuckDBSingleton.getInstance().close();
           this.mTray?.close();
-          // Terminate the worker_thread pools so no idle worker lingers past quit.
+          // Terminate the worker_thread pools and the native core so no child
+          // process lingers past quit.
           void shutdownHashWorker();
           void shutdownBsdiffWorker();
+          void shutdownNativeDeploy();
           if (process.platform !== "darwin") {
             app.quit();
           }

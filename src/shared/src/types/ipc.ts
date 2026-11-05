@@ -25,6 +25,14 @@ import type {
 } from "./electron";
 import type { FeatureFlag } from "./flags";
 import type { Level } from "./logging";
+import type {
+  NativeDeployPlanSummary,
+  NativeDeployRequest,
+  NativeDeployResult,
+  NativeDeployStatus,
+  NativePurgeRequest,
+  NativePurgeResult,
+} from "./nativeDeploy";
 import type { PersistedHive, PersistedState } from "./state";
 
 // NOTE(erri120): You should use unique channel names to prevent overlap. You can prefix
@@ -379,6 +387,13 @@ export interface InvokeChannels {
 
   // Examples:
   "example:ping": () => Promise<string>;
+
+  // Native deployment core (`vortex-core`), spawned by the main process.
+  // Gated by VORTEX_NATIVE_DEPLOY; status reports whether the binary is usable.
+  "nativeDeploy:status": () => Promise<NativeDeployStatus>;
+  "nativeDeploy:plan": (request: NativeDeployRequest) => Promise<NativeDeployPlanSummary>;
+  "nativeDeploy:deploy": (request: NativeDeployRequest) => Promise<NativeDeployResult>;
+  "nativeDeploy:purge": (request: NativePurgeRequest) => Promise<NativePurgeResult>;
 
   // bsdiff binary patching, run on a main-process worker_thread (only paths cross IPC)
   "bsdiff:create": (oldPath: string, newPath: string, patchPath: string) => Promise<void>;

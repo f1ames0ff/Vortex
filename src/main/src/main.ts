@@ -66,6 +66,7 @@ import { PathResolverRegistryImpl } from "./filesystem/path-resolver-registry";
 import { getVortexPath } from "./getVortexPath";
 import { init as initIpcHandlers } from "./ipcHandlers";
 import { log } from "./logging";
+import { initNativeDeployIpc } from "./nativeDeploy/ipc";
 import StylesheetCompiler from "./stylesheetCompiler";
 import { initTelemetryIpcHandler } from "./telemetry/ipcHandler";
 import { createMainTelemetryProvider } from "./telemetry/setup";
@@ -319,6 +320,7 @@ async function main(): Promise<void> {
   initFileSystem(fs);
 
   initIpcHandlers(fs);
+  initNativeDeployIpc();
   initDownloadIpc(downloadManager);
   initUploadIpc(uploadManager);
   initTelemetryIpcHandler();
