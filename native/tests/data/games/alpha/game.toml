@@ -1,0 +1,10 @@
+[game]
+id = "alpha"
+name = "Alpha Test Game"
+nexusDomain = "alphatestgame"
+
+[requirements]
+files = ["alpha.exe"]
+
+[deployment]
+targets = ["."]

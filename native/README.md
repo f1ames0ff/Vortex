@@ -49,7 +49,8 @@ Supported requests:
 {"id":5,"method":"purge","params":{"staging":"/staging","target":"/game/Data","manifest":"/game/Data/vortex.deployment.json"}}
 {"id":6,"method":"staging.status","params":{"staging":"/staging","mods":[{"id":"mod-a","installationPath":"ModA"},{"id":"mod-b","installationPath":"ModB"}]}}
 {"id":7,"method":"install.apply","params":{"temp":"/tmp/ModA.extracted","destination":"/staging/ModA","instructions":[{"type":"hardlink","source":"textures/a.dds","destination":"textures/a.dds"},{"type":"write","destination":"meta.ini","data":"..."}]}}
-{"id":8,"method":"shutdown","params":{}}
+{"id":8,"method":"game.registry","params":{"directory":"/games"}}
+{"id":9,"method":"shutdown","params":{}}
 ```
 
 Every response echoes `id` and contains either `result` or `error`. Commands
@@ -77,6 +78,29 @@ existing .NET host; the core only receives its resolved instructions.
 
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.
+
+`game.registry` scans the immediate child directories of `directory` for a
+`game.toml`, loads each descriptor, and returns them sorted by directory name.
+A descriptor uses the game-extension vocabulary:
+
+```toml
+id = "skyrimse"
+name = "Skyrim Special Edition"
+nexusDomain = "skyrimspecialedition"
+steamAppId = 489830
+requiredFiles = ["SkyrimSE.exe"]
+hooks = ["gamebryo-plugin-management"]
+
+[deployment]
+targets = ["Data"]
+pluginPath = "Data"
+iniPath = "SkyrimPrefs.ini"
+```
+
+The reader also accepts `[game]` and `[requirements]` grouping (`game.id`,
+`requirements.files`), dotted keys, comments, booleans and string/integer
+arrays. Every descriptor is returned with its `sourcePath`; optional fields are
+omitted from the JSON when they are not set.
 
 ## Electron integration
 
@@ -191,6 +215,7 @@ given.
 ```text
 include/vortex/deployment/   deployment types, planner, executor, manifest
 include/vortex/core/         staging status and install instruction APIs
+include/vortex/game/         game.toml reader and game descriptor registry
 src/                         implementation
 cli/                         standalone test CLI
 core/                        long-lived JSON-over-stdio core process
@@ -208,4 +233,4 @@ third_party/nlohmann/        vendored JSON header
    so `InstallManager` no longer orchestrates extraction in the renderer.
 4. Move dependency resolution and collection phase scheduling into the core,
    leaving the renderer with UI state only.
-5. Add the `game.toml` descriptor loader and the first-party module/plugin host.
+5. Add the first-party module/plugin host on top of the game descriptors.

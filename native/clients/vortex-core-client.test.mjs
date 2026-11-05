@@ -68,6 +68,59 @@ test("reports staging status without walking it in the renderer", async () => {
   assert.equal(result.mods[1].status, "missing");
 });
 
+test("loads game descriptors through the core", async () => {
+  const games = join(root, "games");
+  mkdirSync(join(games, "skyrimse"), { recursive: true });
+  mkdirSync(join(games, "alpha"), { recursive: true });
+  mkdirSync(join(games, "zeta"), { recursive: true });
+  mkdirSync(join(games, "ignored"), { recursive: true });
+  writeFileSync(
+    join(games, "skyrimse", "game.toml"),
+    [
+      'id = "skyrimse"',
+      'name = "Skyrim Special Edition"',
+      'nexusDomain = "skyrimspecialedition"',
+      "steamAppId = 489830",
+      'requiredFiles = ["SkyrimSE.exe"]',
+      'hooks = ["gamebryo-plugin-management"]',
+      "",
+      "[deployment]",
+      'targets = ["Data"]',
+      'pluginPath = "Data"',
+      'iniPath = "SkyrimPrefs.ini"',
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(games, "alpha", "game.toml"),
+    'id = "alpha"\nname = "Alpha"\nnexusDomain = "alphatestgame"\n',
+  );
+  writeFileSync(
+    join(games, "zeta", "game.toml"),
+    'id = "zeta"\nname = "Zeta"\nnexusDomain = "zetatestgame"\n',
+  );
+
+  const result = await client.gameRegistry({ directory: games });
+  assert.deepEqual(
+    result.games.map((game) => game.id),
+    ["alpha", "skyrimse", "zeta"],
+  );
+  const skyrim = result.games[1];
+  assert.equal(skyrim.name, "Skyrim Special Edition");
+  assert.equal(skyrim.nexusDomain, "skyrimspecialedition");
+  assert.equal(skyrim.steamAppId, 489830);
+  assert.deepEqual(skyrim.requiredFiles, ["SkyrimSE.exe"]);
+  assert.deepEqual(skyrim.deploymentTargets, ["Data"]);
+  assert.equal(skyrim.pluginPath, "Data");
+  assert.equal(skyrim.iniPath, "SkyrimPrefs.ini");
+  assert.deepEqual(skyrim.hooks, ["gamebryo-plugin-management"]);
+  assert.equal(skyrim.sourcePath, join(games, "skyrimse", "game.toml"));
+
+  await assert.rejects(
+    client.gameRegistry({ directory: join(root, "missing-games") }),
+    /does not exist/,
+  );
+});
+
 test("applies generic installer instructions in the core", async () => {
   const temp = join(root, "install-temp");
   const destination = join(root, "install-destination");

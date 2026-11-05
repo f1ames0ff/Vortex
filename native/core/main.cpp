@@ -6,6 +6,7 @@
 #include "vortex/deployment/planner.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/status.hpp"
+#include "vortex/game/descriptor.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -178,6 +179,28 @@ json modStatusJson(const vortex::core::ModStatusResult& result) {
     return value;
 }
 
+json gameJson(const vortex::game::GameDescriptor& game) {
+    json value = {
+        {"id", game.id},
+        {"name", game.name},
+        {"nexusDomain", game.nexusDomain},
+        {"requiredFiles", game.requiredFiles},
+        {"deploymentTargets", game.deploymentTargets},
+        {"hooks", game.hooks},
+        {"sourcePath", game.sourcePath.string()},
+    };
+    if (game.steamAppId.has_value()) {
+        value["steamAppId"] = *game.steamAppId;
+    }
+    if (game.pluginPath.has_value()) {
+        value["pluginPath"] = *game.pluginPath;
+    }
+    if (game.iniPath.has_value()) {
+        value["iniPath"] = *game.iniPath;
+    }
+    return value;
+}
+
 vortex::core::InstallInstructionType parseInstructionType(const std::string& value) {
     if (value == "mkdir") {
         return vortex::core::InstallInstructionType::Mkdir;
@@ -236,9 +259,23 @@ json dispatch(CoreState& state, const Request& request) {
             {"version", CORE_VERSION},
             {"protocol", CORE_PROTOCOL},
             {"capabilities",
-             {"ping", "scan", "staging.status", "install.apply", "plan", "deploy", "purge"}},
+             {"ping", "scan", "staging.status", "install.apply", "game.registry", "plan",
+              "deploy", "purge"}},
             {"pid", 0},
         };
+    }
+
+    if (request.method == "game.registry") {
+        const auto directory = params.value("directory", std::string{});
+        if (directory.empty()) {
+            throw std::runtime_error("params.directory is required");
+        }
+        const auto games = vortex::game::loadGameDescriptors(pathFromUtf8(directory));
+        json result = json::array();
+        for (const auto& game : games) {
+            result.push_back(gameJson(game));
+        }
+        return {{"games", std::move(result)}};
     }
 
     if (request.method == "scan") {

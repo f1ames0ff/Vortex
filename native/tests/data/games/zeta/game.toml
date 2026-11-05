@@ -1,0 +1,6 @@
+id = "zeta"
+name = "Zeta Test Game"
+nexusDomain = "zetatestgame"
+steamAppId = 123456
+requiredFiles = ["zeta.exe"]
+deploymentTargets = ["Data", "Mods"]

@@ -6,6 +6,8 @@
 #include "vortex/deployment/planner.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/status.hpp"
+#include "vortex/game/descriptor.hpp"
+#include "vortex/game/toml.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -49,6 +51,18 @@ fs::path makeRoot(const std::string& name) {
                                                    platform::operation_id());
     fs::create_directories(root);
     return root;
+}
+
+void expectTomlError(const std::string& text, std::size_t line, const std::string& needle) {
+    try {
+        (void)vortex::game::parseToml(text, "malformed.toml");
+    } catch (const vortex::game::TomlError& err) {
+        check(err.line() == line, "TOML error should report the right line");
+        check(std::string(err.what()).find(needle) != std::string::npos,
+              "TOML error should mention the problem");
+        return;
+    }
+    throw std::runtime_error("expected malformed TOML to be rejected");
 }
 
 void testManifestRoundtrip() {
@@ -468,6 +482,188 @@ void testInstallDuplicateDestinations() {
     fs::remove_all(root);
 }
 
+void testTomlParsing() {
+    const auto document = vortex::game::parseToml(R"toml(
+# a comment
+title = "vortex" # trailing comment
+enabled = true
+count = 1_234
+negative = -42
+literal = 'C:\Games\Vortex'
+game.id = "skyrimse"
+numbers = [1, 2, 3]
+names = [
+    "alpha", # inline comment in an array
+    "beta",
+]
+empty = []
+
+[deployment]
+targets = ["Data", "Mods"]
+pluginPath = "Data"
+)toml",
+                                                "sample.toml");
+
+    const auto* title = vortex::game::findToml(document, "title");
+    check(title != nullptr && title->isString(), "TOML string value");
+    check(title->stringValue == "vortex", "TOML string content");
+
+    const auto* enabled = vortex::game::findToml(document, "enabled");
+    check(enabled != nullptr && enabled->isBoolean(), "TOML boolean value");
+    check(enabled->booleanValue, "TOML boolean content");
+
+    const auto* count = vortex::game::findToml(document, "count");
+    check(count != nullptr && count->isInteger(), "TOML integer value");
+    check(count->integerValue == 1234, "TOML integer underscores");
+
+    const auto* negative = vortex::game::findToml(document, "negative");
+    check(negative != nullptr && negative->integerValue == -42, "TOML negative integer");
+
+    const auto* literal = vortex::game::findToml(document, "literal");
+    check(literal != nullptr && literal->stringValue == "C:\\Games\\Vortex",
+          "TOML literal string");
+
+    const auto* dotted = vortex::game::findToml(document, "game.id");
+    check(dotted != nullptr && dotted->stringValue == "skyrimse", "TOML dotted key");
+
+    const auto* numbers = vortex::game::findToml(document, "numbers");
+    check(numbers != nullptr && numbers->isArray(), "TOML integer array");
+    check(numbers->arrayValue.size() == 3, "TOML integer array length");
+    check(numbers->arrayValue[0].integerValue == 1 &&
+              numbers->arrayValue[2].integerValue == 3,
+          "TOML integer array content");
+
+    const auto* names = vortex::game::findToml(document, "names");
+    check(names != nullptr && names->isArray(), "TOML string array");
+    check(names->arrayValue.size() == 2, "TOML string array length");
+    check(names->arrayValue[0].stringValue == "alpha" &&
+              names->arrayValue[1].stringValue == "beta",
+          "TOML string array content");
+
+    const auto* empty = vortex::game::findToml(document, "empty");
+    check(empty != nullptr && empty->isArray() && empty->arrayValue.empty(),
+          "TOML empty array");
+
+    const auto* targets = vortex::game::findToml(document, "deployment.targets");
+    check(targets != nullptr && targets->isArray(), "TOML table array");
+    check(targets->arrayValue.size() == 2, "TOML table array length");
+    check(targets->arrayValue[1].stringValue == "Mods", "TOML table array content");
+
+    const auto* pluginPath = vortex::game::findToml(document, "deployment.pluginPath");
+    check(pluginPath != nullptr && pluginPath->stringValue == "Data",
+          "TOML table string");
+}
+
+void testGameDescriptorParsing() {
+    const auto path = fs::path(VORTEX_TEST_DATA_DIR) / "games" / "skyrimse" / "game.toml";
+    const auto descriptor = vortex::game::loadGameDescriptor(path);
+
+    check(descriptor.id == "skyrimse", "descriptor id");
+    check(descriptor.name == "Skyrim Special Edition", "descriptor name");
+    check(descriptor.nexusDomain == "skyrimspecialedition", "descriptor nexusDomain");
+    check(descriptor.steamAppId.has_value() && *descriptor.steamAppId == 489830,
+          "descriptor steamAppId");
+    check(descriptor.requiredFiles.size() == 1 &&
+              descriptor.requiredFiles[0] == "SkyrimSE.exe",
+          "descriptor requiredFiles");
+    check(descriptor.deploymentTargets.size() == 1 &&
+              descriptor.deploymentTargets[0] == "Data",
+          "descriptor deploymentTargets");
+    check(descriptor.pluginPath.has_value() && *descriptor.pluginPath == "Data",
+          "descriptor pluginPath");
+    check(descriptor.iniPath.has_value() && *descriptor.iniPath == "SkyrimPrefs.ini",
+          "descriptor iniPath");
+    check(descriptor.hooks.size() == 2 &&
+              descriptor.hooks[0] == "gamebryo-plugin-management",
+          "descriptor hooks");
+    check(descriptor.sourcePath == path, "descriptor sourcePath");
+}
+
+void testMalformedToml() {
+    expectTomlError("id = \"unterminated\n", 1, "unterminated");
+    expectTomlError("id = 1\nname\n", 2, "expected");
+    expectTomlError("values = [1, 2\n", 1, "unterminated array");
+    expectTomlError("a = 1\na = 2\n", 2, "duplicate key");
+    expectTomlError("a = 1\n[a]\n", 2, "conflicts");
+
+    const auto root = makeRoot("game-malformed");
+    writeFile(root / "game.toml", "id = \"broken\n");
+    bool threw = false;
+    try {
+        (void)vortex::game::loadGameDescriptor(root / "game.toml");
+    } catch (const vortex::game::TomlError& err) {
+        threw = true;
+        check(err.line() == 1, "descriptor TOML error line");
+        check(std::string(err.what()).find("game.toml:1") != std::string::npos,
+              "descriptor TOML error includes the source path");
+    }
+    check(threw, "malformed descriptor should be rejected");
+    fs::remove_all(root);
+}
+
+void testMissingGameDescriptors() {
+    const auto root = makeRoot("game-missing");
+    const auto missingDescriptor = root / "missing" / "game.toml";
+
+    bool descriptorThrew = false;
+    try {
+        (void)vortex::game::loadGameDescriptor(missingDescriptor);
+    } catch (const std::runtime_error& err) {
+        descriptorThrew = true;
+        check(std::string(err.what()).find("failed to open game descriptor") !=
+                  std::string::npos,
+              "missing descriptor error");
+    }
+    check(descriptorThrew, "missing descriptor should be rejected");
+
+    bool registryThrew = false;
+    try {
+        (void)vortex::game::loadGameDescriptors(root / "missing-games");
+    } catch (const std::runtime_error& err) {
+        registryThrew = true;
+        check(std::string(err.what()).find("does not exist") != std::string::npos,
+              "missing registry error");
+    }
+    check(registryThrew, "missing registry directory should be rejected");
+    fs::remove_all(root);
+}
+
+void testGameDescriptorValidation() {
+    const auto root = makeRoot("game-validation");
+    writeFile(root / "game.toml", "id = \"incomplete\"\nname = \"Incomplete\"\n");
+
+    bool threw = false;
+    try {
+        (void)vortex::game::loadGameDescriptor(root / "game.toml");
+    } catch (const std::runtime_error& err) {
+        threw = true;
+        check(std::string(err.what()).find("nexusDomain") != std::string::npos,
+              "missing field error should name the field");
+    }
+    check(threw, "descriptor without nexusDomain should be rejected");
+    fs::remove_all(root);
+}
+
+void testGameRegistryOrder() {
+    const auto directory = fs::path(VORTEX_TEST_DATA_DIR) / "games";
+    const auto descriptors = vortex::game::loadGameDescriptors(directory);
+
+    check(descriptors.size() == 3, "registry should skip directories without game.toml");
+    check(descriptors[0].id == "alpha", "registry first descriptor");
+    check(descriptors[1].id == "skyrimse", "registry second descriptor");
+    check(descriptors[2].id == "zeta", "registry third descriptor");
+
+    check(descriptors[0].requiredFiles.size() == 1 &&
+              descriptors[0].requiredFiles[0] == "alpha.exe",
+          "registry reads requirements table");
+    check(descriptors[0].deploymentTargets.size() == 1 &&
+              descriptors[0].deploymentTargets[0] == ".",
+          "registry reads deployment table");
+    check(descriptors[2].deploymentTargets.size() == 2 &&
+              descriptors[2].deploymentTargets[1] == "Mods",
+          "registry reads deployment target list");
+}
+
 } // namespace
 
 int main() {
@@ -484,6 +680,12 @@ int main() {
         testInstallFailuresAndJournal();
         testInstallRejectsSymlinkEscapes();
         testInstallDuplicateDestinations();
+        testTomlParsing();
+        testGameDescriptorParsing();
+        testMalformedToml();
+        testMissingGameDescriptors();
+        testGameDescriptorValidation();
+        testGameRegistryOrder();
         std::cout << "all core and deployment tests passed\n";
         return 0;
     } catch (const std::exception& err) {

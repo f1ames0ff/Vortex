@@ -1,0 +1,16 @@
+# Sample first-party game descriptor used by the native tests. This is not a
+# real game install and must not be used to discover one.
+
+id = "skyrimse"
+name = "Skyrim Special Edition"
+nexusDomain = "skyrimspecialedition"
+steamAppId = 489830
+requiredFiles = [
+    "SkyrimSE.exe", # the executable discovery matches against
+]
+hooks = ["gamebryo-plugin-management", "gamebryo-savegame-management"]
+
+[deployment]
+targets = ["Data"]
+pluginPath = "Data"
+iniPath = "SkyrimPrefs.ini"

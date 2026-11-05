@@ -44,18 +44,27 @@ add_library(vortex_core
 target_link_libraries(vortex_core PUBLIC vortex_deployment Threads::Threads)
 target_include_directories(vortex_core PUBLIC include)
 
+add_library(vortex_game
+    src/game_descriptor.cpp
+    src/toml.cpp
+)
+target_include_directories(vortex_game PUBLIC include)
+
 add_executable(vortex-deploy cli/main.cpp)
 target_link_libraries(vortex-deploy PRIVATE vortex_deployment)
 
 add_executable(vortex-core core/main.cpp)
-target_link_libraries(vortex-core PRIVATE vortex_core)
+target_link_libraries(vortex-core PRIVATE vortex_core vortex_game)
 
 # `cmake --install` staging point used by the packaging step. Electron-builder
 # picks this up as resources/native/vortex-core[.exe].
 install(TARGETS vortex-core RUNTIME DESTINATION native)
 
 add_executable(vortex-deployment-tests tests/main.cpp)
-target_link_libraries(vortex-deployment-tests PRIVATE vortex_core)
+target_link_libraries(vortex-deployment-tests PRIVATE vortex_core vortex_game)
+target_compile_definitions(vortex-deployment-tests PRIVATE
+    VORTEX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+)
 
 enable_testing()
 add_test(NAME vortex-deployment-tests COMMAND vortex-deployment-tests)

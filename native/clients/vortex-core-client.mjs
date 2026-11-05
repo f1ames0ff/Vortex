@@ -49,6 +49,10 @@ export class VortexCoreClient {
     return this.request("staging.status", request);
   }
 
+  gameRegistry(request) {
+    return this.request("game.registry", request);
+  }
+
   installApply(request) {
     return this.request("install.apply", request);
   }
