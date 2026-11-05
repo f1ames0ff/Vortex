@@ -22,6 +22,10 @@ struct DownloadRequest {
     std::vector<std::string> urls;
     std::vector<std::pair<std::string, std::string>> headers;
     std::string referer;
+    std::string userAgent;
+    std::string proxy;
+    /** When false, write directly to the final path (partial files resume). */
+    bool atomic = true;
     std::filesystem::path curlPath = "curl";
     int maxRetries = 3;
     int concurrency = 3;

@@ -439,6 +439,10 @@ export interface NativeDownloadRequest {
   urls: string[];
   headers?: Record<string, string>;
   referer?: string;
+  userAgent?: string;
+  proxy?: string;
+  /** Write directly to the destination instead of the default .part file. */
+  atomic?: boolean;
   /** Injected by main; defaults to curl on PATH. */
   curl?: string;
   maxRetries?: number;

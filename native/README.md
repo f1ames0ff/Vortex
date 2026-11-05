@@ -137,11 +137,20 @@ Proton prefixes, and write the Vortex header with CRLF rows atomically.
 `download.add` creates a core-owned queue entry; a scheduler thread starts up
 to `concurrency` transfers and the platform `curl` binary performs the
 transfer. The core owns retries, pause/resume (via `--continue-at`), cancel,
-progress bytes and the atomic `.part` -> final rename. Only `http(s)` URLs and
-safe relative file names are accepted; headers are checked for line breaks.
-`InstallManager` tries this path for direct HTTP(S) dependency downloads when a
-file name is known, imports the finished archive through `import-downloads`,
-and falls back to the existing download manager if the core transfer fails.
+progress bytes and the atomic `.part` -> final rename. Requests accept custom
+headers, a user-agent, a proxy URL and `atomic: false` for callers that own the
+destination and resume partial files directly. Only `http(s)` URLs and safe
+relative file names are accepted; headers are checked for line breaks.
+
+Two callers use it: `InstallManager` for direct HTTP(S) dependency downloads
+with a known file name, and the main-process `HybridDownloadManager`, which
+routes `download:start` through the core using the probe URL and headers the
+renderer resolved. Nexus CDN URLs therefore keep their signed token, and a
+configured cookie jar is serialized into a `Cookie` header. The TypeScript
+`got` manager remains the fallback when the core is unavailable, a bandwidth
+limit is configured, or a resume follows a core restart. Set
+`VORTEX_NATIVE_DOWNLOADS=0` to force the TypeScript path. Native downloads
+share the `VORTEX_NATIVE_DEPLOY=1` feature gate with the rest of the core.
 
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.
@@ -237,8 +246,11 @@ Known integration gaps for the next slice:
 - Move deployment and single-mod activation still use the TypeScript path.
 - Downloads use the external `curl` binary. Linux distributions ship it;
   Windows 10+ includes `curl.exe`. Set `VORTEX_CURL_PATH` to override the
-  binary. Nexus cookie/proxy-authenticated transfers still go through the
-  TypeScript downloader.
+  binary. Curl honours the standard `http_proxy`/`https_proxy` environment
+  variables; an explicit proxy can be passed per request.
+- The core download queue is in-memory and has no token-bucket bandwidth
+  limiter; downloads started while a bandwidth cap is configured stay on the
+  TypeScript `got` manager.
 - Exact skip-list entries are passed to the core; minimatch patterns from
   `ignoreDeploy` still rely on the TypeScript path.
 - The packaged app does not embed a Windows build of the core yet.

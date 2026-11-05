@@ -51,6 +51,7 @@ import Application from "./Application";
 import { parseCommandline } from "./cli";
 import { init as initDownloadIpc } from "./downloading/ipc";
 import { DownloadManager } from "./downloading/manager";
+import { HybridDownloadManager } from "./downloading/nativeManager";
 import { terminateAsync } from "./errorHandling";
 import {
   reportCrash,
@@ -66,7 +67,7 @@ import { PathResolverRegistryImpl } from "./filesystem/path-resolver-registry";
 import { getVortexPath } from "./getVortexPath";
 import { init as initIpcHandlers } from "./ipcHandlers";
 import { log } from "./logging";
-import { initNativeDeployIpc } from "./nativeDeploy/ipc";
+import { initNativeDeployIpc, nativeCoreClient } from "./nativeDeploy/ipc";
 import StylesheetCompiler from "./stylesheetCompiler";
 import { initTelemetryIpcHandler } from "./telemetry/ipcHandler";
 import { createMainTelemetryProvider } from "./telemetry/setup";
@@ -321,7 +322,10 @@ async function main(): Promise<void> {
 
   initIpcHandlers(fs);
   initNativeDeployIpc();
-  initDownloadIpc(downloadManager);
+  const hybridDownloads = new HybridDownloadManager(downloadManager, nativeCoreClient(), {
+    userAgent: `Vortex/${app.getVersion()}`,
+  });
+  initDownloadIpc(process.env.VORTEX_NATIVE_DOWNLOADS === "0" ? downloadManager : hybridDownloads);
   initUploadIpc(uploadManager);
   initTelemetryIpcHandler();
 

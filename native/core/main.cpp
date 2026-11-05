@@ -597,6 +597,9 @@ vortex::core::DownloadRequest readDownloadRequest(const json& params) {
     request.fileName = params.value("fileName", std::string{});
     request.urls = stringArray(params, "urls");
     request.referer = params.value("referer", std::string{});
+    request.userAgent = params.value("userAgent", std::string{});
+    request.proxy = params.value("proxy", std::string{});
+    request.atomic = params.value("atomic", true);
     request.curlPath = pathFromUtf8(params.value("curl", std::string("curl")));
     request.maxRetries = params.value("maxRetries", 3);
     request.concurrency = params.value("concurrency", 3);

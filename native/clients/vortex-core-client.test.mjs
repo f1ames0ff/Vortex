@@ -430,3 +430,39 @@ test("reports failed downloads and cancels in-flight ones", async () => {
     server.close();
   }
 });
+
+test("forwards download headers and supports a non-atomic destination", async () => {
+  const payload = Buffer.from("authenticated payload");
+  const server = createServer((request, response) => {
+    if (request.headers["x-api-key"] !== "secret") {
+      response.writeHead(401);
+      response.end("unauthorized");
+      return;
+    }
+    response.writeHead(200, { "content-length": payload.length });
+    response.end(payload);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${server.address().port}/direct.bin`;
+
+  try {
+    const directory = join(root, "downloads-auth");
+    await client.downloadAdd({
+      id: "dl-auth",
+      directory,
+      fileName: "direct.bin",
+      urls: [url],
+      headers: { "x-api-key": "secret" },
+      atomic: false,
+      curl: process.env.VORTEX_CURL_PATH ?? "curl",
+      maxRetries: 0,
+    });
+    const status = await waitForState("dl-auth", ["finished", "failed"]);
+    assert.equal(status.state, "finished", status.error);
+    assert.equal(status.bytes, payload.length);
+    assert.deepEqual(readFileSync(join(directory, "direct.bin")), payload);
+    assert.equal(existsSync(join(directory, "direct.bin.part")), false);
+  } finally {
+    server.close();
+  }
+});

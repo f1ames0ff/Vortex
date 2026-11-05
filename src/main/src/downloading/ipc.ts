@@ -12,6 +12,7 @@ import type { WebContents } from "electron";
 import { betterIpcMain } from "../ipc";
 import { log } from "../logging";
 import type { DownloadManager } from "./manager";
+import type { HybridDownloadManager } from "./nativeManager";
 
 function wireToResolvedEndpoint(wire: WireEndpoint): ResolvedEndpoint {
   return { url: new URL(wire.url), headers: wire.headers };
@@ -34,7 +35,7 @@ function resourceToUrl(resource: ResolvedResource): string {
   return resource.probeEndpoint.url.toString();
 }
 
-export function init(manager: DownloadManager): void {
+export function init(manager: DownloadManager | HybridDownloadManager): void {
   // Our network timeouts are 30 seconds, which means that we will fail
   // with the callback before the network could. Give it a bit of extra time to avoid spurious failures.
   const timeout = 45_000;
@@ -55,7 +56,14 @@ export function init(manager: DownloadManager): void {
     );
     const resource = wireToResolvedResource(wireResource);
     const resolver = () => Promise.resolve(resource);
-    const handle = manager.download(resource, dest, resolver, undefined, undefined, downloadId);
+    const handle = await manager.download(
+      resource,
+      dest,
+      resolver,
+      undefined,
+      undefined,
+      downloadId,
+    );
     webContentsByDownloadId.set(handle.downloadId, webContents);
     handle.promise.catch((err) =>
       log("error", "download failed", { downloadId: handle.downloadId, err }),
@@ -84,7 +92,7 @@ export function init(manager: DownloadManager): void {
     return wire;
   });
 
-  betterIpcMain.handle("download:resume", (event, wireCheckpoint) => {
+  betterIpcMain.handle("download:resume", async (event, wireCheckpoint) => {
     const webContents = event.sender;
     const resource = wireToResolvedResource({
       probeEndpoint: { url: wireCheckpoint.resource },
@@ -94,7 +102,7 @@ export function init(manager: DownloadManager): void {
       resource,
     };
     const resolver = () => Promise.resolve(resource);
-    const handle = manager.resume(checkpoint, resolver, staticChunker());
+    const handle = await manager.resume(checkpoint, resolver, staticChunker());
     webContentsByDownloadId.set(wireCheckpoint.downloadId, webContents);
     handle.promise.catch((err) =>
       log("error", "download failed", {

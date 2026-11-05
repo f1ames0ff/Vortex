@@ -48,6 +48,10 @@ fs::path finalPathFor(const DownloadRequest& request) {
     return request.directory / fs::path(request.fileName);
 }
 
+fs::path activePathFor(const DownloadRequest& request) {
+    return request.atomic ? partPathFor(request) : finalPathFor(request);
+}
+
 } // namespace
 
 DownloadQueue::DownloadQueue() : scheduler_(&DownloadQueue::schedule, this) {}
@@ -123,6 +127,13 @@ std::string DownloadQueue::add(DownloadRequest request) {
     if (ec) {
         throw std::runtime_error("create download directory: " + ec.message());
     }
+    const auto target = finalPathFor(request);
+    if (!target.parent_path().empty() && target.parent_path() != request.directory) {
+        fs::create_directories(target.parent_path(), ec);
+        if (ec) {
+            throw std::runtime_error("create download directory: " + ec.message());
+        }
+    }
 
     auto job = std::make_shared<Job>();
     job->request = std::move(request);
@@ -130,7 +141,13 @@ std::string DownloadQueue::add(DownloadRequest request) {
     job->status.fileName = job->request.fileName;
     job->status.url = job->request.urls.front();
     job->status.startedAt = deployment::platform::now_ms();
-    if (fileSize(finalPathFor(job->request)) > 0) {
+    if (!job->request.atomic) {
+        // The main-process downloader owns the destination and decides when to
+        // reuse it; a start is a fresh transfer, not a cache hit.
+        std::error_code cleanup;
+        fs::remove(finalPathFor(job->request), cleanup);
+        fs::remove(partPathFor(job->request), cleanup);
+    } else if (fileSize(finalPathFor(job->request)) > 0) {
         job->done = true;
         job->joined = true;
         job->status.state = "finished";
@@ -161,7 +178,7 @@ std::optional<DownloadStatus> DownloadQueue::status(const std::string& id) const
     }
     auto status = found->second->status;
     if (status.state == "downloading" || status.state == "queued" || status.state == "paused") {
-        status.bytes = fileSize(partPathFor(found->second->request));
+        status.bytes = fileSize(activePathFor(found->second->request));
     }
     return status;
 }
@@ -174,7 +191,7 @@ std::vector<DownloadStatus> DownloadQueue::list() const {
         auto status = entry.second->status;
         if (status.state == "downloading" || status.state == "queued" ||
             status.state == "paused") {
-            status.bytes = fileSize(partPathFor(entry.second->request));
+            status.bytes = fileSize(activePathFor(entry.second->request));
         }
         result.push_back(std::move(status));
     }
@@ -298,8 +315,8 @@ void DownloadQueue::run(const std::shared_ptr<Job>& job) {
     auto& request = job->request;
     auto& status = job->status;
 
-    const auto part = partPathFor(request);
     const auto final = finalPathFor(request);
+    const auto part = request.atomic ? partPathFor(request) : final;
     std::string error;
     bool success = false;
 
@@ -329,6 +346,16 @@ void DownloadQueue::run(const std::shared_ptr<Job>& job) {
         if (fileSize(part) > 0) {
             arguments.push_back("--continue-at");
             arguments.push_back("-");
+        }
+        arguments.push_back("--connect-timeout");
+        arguments.push_back("30");
+        if (!request.userAgent.empty()) {
+            arguments.push_back("--user-agent");
+            arguments.push_back(request.userAgent);
+        }
+        if (!request.proxy.empty()) {
+            arguments.push_back("--proxy");
+            arguments.push_back(request.proxy);
         }
         arguments.push_back("--referer");
         arguments.push_back(request.referer);
@@ -370,25 +397,27 @@ void DownloadQueue::run(const std::shared_ptr<Job>& job) {
         if (job->cancelled) {
             status.state = "cancelled";
             status.finishedAt = deployment::platform::now_ms();
-            std::error_code cleanup;
-            fs::remove(part, cleanup);
+            if (request.atomic) {
+                std::error_code cleanup;
+                fs::remove(part, cleanup);
+            }
         } else if (job->paused) {
             status.state = "paused";
         } else if (success) {
-            std::error_code ec;
-            fs::remove(final, ec);
-            ec.clear();
-            fs::rename(part, final, ec);
-            if (ec) {
-                status.state = "failed";
-                status.error = "finalise download: " + ec.message();
-                status.finishedAt = deployment::platform::now_ms();
-            } else {
-                status.state = "finished";
-                status.error.clear();
-                status.bytes = fileSize(final);
-                status.finishedAt = deployment::platform::now_ms();
+            status.state = "finished";
+            status.error.clear();
+            if (part != final) {
+                std::error_code ec;
+                fs::remove(final, ec);
+                ec.clear();
+                fs::rename(part, final, ec);
+                if (ec) {
+                    status.state = "failed";
+                    status.error = "finalise download: " + ec.message();
+                }
             }
+            status.bytes = fileSize(final);
+            status.finishedAt = deployment::platform::now_ms();
         } else if (status.state != "failed") {
             status.state = "failed";
             status.error = error.empty() ? "download failed" : error;
