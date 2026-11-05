@@ -3,8 +3,10 @@ import * as path from "path";
 import format from "string-template";
 
 import getVortexPath from "../../util/getVortexPath";
+import { protonMyGamesPath } from "../../util/linux/proton";
 import { makeOverlayableDictionary } from "../../util/util";
 import type { IDiscoveryResult } from "../gamemode_management/types/IDiscoveryResult";
+import { getGame } from "../gamemode_management/util/getGame";
 
 interface IGameSupport {
   iniFiles: string[];
@@ -173,8 +175,6 @@ const gameSupport = makeOverlayableDictionary<string, IGameSupport>(
 );
 
 export function iniFiles(gameMode: string, discovery: IDiscoveryResult) {
-  const mygames = path.join(getVortexPath("documents"), "My Games");
-
   let store = discovery?.store;
 
   // override for the case where enderal se is installed as a total conversion
@@ -187,9 +187,23 @@ export function iniFiles(gameMode: string, discovery: IDiscoveryResult) {
     store = "enderaloverride";
   }
 
-  return (gameSupport.get(gameMode, "iniFiles", store) ?? []).map((filePath) =>
-    format(filePath, { mygames, game: discovery.path }),
-  );
+  const templates = gameSupport.get(gameMode, "iniFiles", store) ?? [];
+  // All templates start with {mygames}/<game folder>/<file>; use that folder
+  // to find the game's My Games directory inside a Proton prefix.
+  const marker = "{mygames}";
+  const firstTemplate = templates[0];
+  const gameFolder =
+    firstTemplate !== undefined && firstTemplate.startsWith(marker)
+      ? firstTemplate.slice(marker.length).split(/[/\\]/).filter(Boolean)[0]
+      : undefined;
+  const markerFile = firstTemplate !== undefined ? path.basename(firstTemplate) : undefined;
+  const steamAppId = getGame(gameMode)?.details?.steamAppId;
+  const mygames =
+    (gameFolder !== undefined
+      ? protonMyGamesPath(discovery?.path, gameFolder, markerFile, steamAppId)
+      : undefined) ?? path.join(getVortexPath("documents"), "My Games");
+
+  return templates.map((filePath) => format(filePath, { mygames, game: discovery.path }));
 }
 
 export function iniFormat(gameMode: string) {
