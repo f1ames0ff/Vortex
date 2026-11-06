@@ -811,11 +811,11 @@ void testCollectionJobQueue() {
     job.gameId = "skyrimse";
     job.concurrency = 1;
     job.members = {
-        {0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
-        {1, "requires_b", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
-        {2, "requires_c", "requires", 2, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
-        {3, "recommends_d", "recommends", 666, false, "pending", std::nullopt, std::nullopt, "", 0, {}},
-        {4, "requires_ignored", "requires", 1, true, "ignored", std::nullopt, std::nullopt, "", 0, {}},
+        {0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
+        {1, "requires_b", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
+        {2, "requires_c", "requires", 2, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
+        {3, "recommends_d", "recommends", 666, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
+        {4, "requires_ignored", "requires", 1, true, "ignored", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
     };
 
     vortex::core::CollectionJobs jobs;
@@ -824,19 +824,19 @@ void testCollectionJobQueue() {
 
     auto first = jobs.next(id);
     check(first.size() == 1 && first[0].ruleId == "requires_a", "first phase member");
-    jobs.update(id, {"requires_a", "installed", "mod-a", std::nullopt, "", false});
+    jobs.update(id, {"requires_a", "installed", "mod-a", std::nullopt, "", false, std::nullopt});
 
     auto second = jobs.next(id);
     check(second.size() == 1 && second[0].ruleId == "requires_b", "second phase member");
-    jobs.update(id, {"requires_b", "installed", "mod-b", std::nullopt, "", false});
+    jobs.update(id, {"requires_b", "installed", "mod-b", std::nullopt, "", false, std::nullopt});
 
     auto third = jobs.next(id);
     check(third.size() == 1 && third[0].ruleId == "requires_c", "next phase member");
-    jobs.update(id, {"requires_c", "installed", "mod-c", std::nullopt, "", false});
+    jobs.update(id, {"requires_c", "installed", "mod-c", std::nullopt, "", false, std::nullopt});
 
     auto fourth = jobs.next(id);
     check(fourth.size() == 1 && fourth[0].ruleId == "recommends_d", "optional phase last");
-    jobs.update(id, {"recommends_d", "installed", "mod-d", std::nullopt, "", false});
+    jobs.update(id, {"recommends_d", "installed", "mod-d", std::nullopt, "", false, std::nullopt});
 
     const auto* finished = jobs.find(id);
     check(finished != nullptr, "collection job exists");
@@ -857,18 +857,18 @@ void testCollectionJobRetryAndStall() {
     job.concurrency = 1;
     job.maxRetries = 2;
     job.stallMs = 0;
-    job.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}}};
+    job.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt}};
     vortex::core::CollectionJobs jobs;
     const auto id = jobs.start(job);
 
     check(jobs.next(id).size() == 1, "retry first attempt");
-    jobs.update(id, {"requires_a", "failed", std::nullopt, std::nullopt, "transient", true});
+    jobs.update(id, {"requires_a", "failed", std::nullopt, std::nullopt, "transient", true, std::nullopt});
     auto status = vortex::core::CollectionJobs::status(*jobs.find(id));
     check(status["members"][0]["status"] == "pending", "failed member requeued");
     check(status["members"][0]["attempts"] == 1, "retry attempt count");
 
     check(jobs.next(id).size() == 1, "retry second attempt");
-    jobs.update(id, {"requires_a", "failed", std::nullopt, std::nullopt, "permanent", false});
+    jobs.update(id, {"requires_a", "failed", std::nullopt, std::nullopt, "permanent", false, std::nullopt});
     status = vortex::core::CollectionJobs::status(*jobs.find(id));
     check(status["members"][0]["status"] == "failed", "failed member terminal");
     check(status["complete"].get<bool>(), "failed member completes the phase");
@@ -876,7 +876,7 @@ void testCollectionJobRetryAndStall() {
     // A fresh job with no progress is reported as stalled once the threshold passes.
     vortex::core::CollectionJob stalled;
     stalled.stallMs = 0;
-    stalled.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}}};
+    stalled.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt}};
     const auto stalledId = jobs.start(stalled);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     const auto stalledStatus = vortex::core::CollectionJobs::status(*jobs.find(stalledId));
@@ -985,10 +985,16 @@ void testCollectionRun() {
     check(snapshot.members.size() == 1, "collection run member count");
     check(snapshot.members[0].status == "installed", "collection run installed member");
     check(snapshot.members[0].modId == "ModA", "collection run mod id");
+    check(snapshot.members[0].result.has_value(), "collection run result descriptor");
+    check(snapshot.members[0].result->modId == "ModA", "collection result mod id");
+    check(snapshot.members[0].result->installationPath == destination.string(),
+          "collection result installation path");
+    check(!snapshot.members[0].result->files.empty(), "collection result file list");
     check(readFile(destination / "a.txt") == "collection-content",
           "collection run extracted and installed the file");
     const auto status = vortex::core::CollectionJobs::status(snapshot);
     check(status["complete"].get<bool>(), "collection run completes");
+    check(status["members"][0]["result"]["modId"] == "ModA", "collection status result json");
 
     fs::remove_all(root);
 #endif

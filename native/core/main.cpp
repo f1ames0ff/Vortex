@@ -699,6 +699,20 @@ json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
     if (!member.error.empty()) {
         value["error"] = member.error;
     }
+    if (member.result.has_value()) {
+        json result = {
+            {"modId", member.result->modId},
+            {"installationPath", member.result->installationPath},
+            {"files", member.result->files},
+        };
+        if (member.result->downloadId.has_value()) {
+            result["downloadId"] = *member.result->downloadId;
+        }
+        if (member.result->archivePath.has_value()) {
+            result["archivePath"] = *member.result->archivePath;
+        }
+        value["result"] = std::move(result);
+    }
     return value;
 }
 

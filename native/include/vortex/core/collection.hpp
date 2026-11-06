@@ -31,6 +31,14 @@ struct CollectionTask {
     std::optional<std::string> modId;
 };
 
+struct CollectionMemberResult {
+    std::string modId;
+    std::string installationPath;
+    std::optional<std::string> downloadId;
+    std::optional<std::string> archivePath;
+    std::vector<std::string> files;
+};
+
 struct CollectionMemberState {
     int ruleIndex = 0;
     std::string ruleId;
@@ -43,6 +51,7 @@ struct CollectionMemberState {
     std::string error;
     int attempts = 0;
     CollectionTask task;
+    std::optional<CollectionMemberResult> result;
 };
 
 struct CollectionJob {
@@ -67,6 +76,7 @@ struct CollectionMemberUpdate {
     std::optional<std::string> downloadId;
     std::string error;
     bool retry = false;
+    std::optional<CollectionMemberResult> result;
 };
 
 class CollectionJobs {

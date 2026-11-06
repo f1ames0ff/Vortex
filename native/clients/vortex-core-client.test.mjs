@@ -681,6 +681,8 @@ test("executes a collection member through core workers", async () => {
     assert.equal(status.complete, true);
     assert.equal(status.members[0].status, "installed", status.members[0].error);
     assert.equal(status.members[0].modId, "ModA");
+    assert.equal(status.members[0].result.modId, "ModA");
+    assert.ok(status.members[0].result.files.includes("a.txt"));
     assert.equal(status.counts.installed, 1);
     assert.equal(readFileSync(join(destination, "a.txt"), "utf8"), "worker-content");
   } finally {
@@ -737,6 +739,9 @@ test("attaches and executes a task on a collection member", async () => {
   });
   assert.equal(executed.complete, true);
   assert.equal(executed.members[0].status, "installed", executed.members[0].error);
+  assert.equal(executed.members[0].result.modId, "ModA");
+  assert.equal(executed.members[0].result.installationPath, destination);
+  assert.ok(executed.members[0].result.files.includes("b.txt"));
   assert.equal(readFileSync(join(destination, "b.txt"), "utf8"), "attached-content");
 });
 

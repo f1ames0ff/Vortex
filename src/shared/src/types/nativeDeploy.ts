@@ -407,6 +407,16 @@ export interface NativeCollectionJobMember {
   attempts?: number;
   /** True when the member carries a core execution task. */
   hasTask?: boolean;
+  /** Set once a core-driven task completes successfully. */
+  result?: NativeCollectionMemberResult;
+}
+
+export interface NativeCollectionMemberResult {
+  modId: string;
+  installationPath: string;
+  downloadId?: string;
+  archivePath?: string;
+  files: string[];
 }
 
 export interface NativeCollectionJobStatus {

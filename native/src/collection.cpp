@@ -245,6 +245,11 @@ void CollectionJobs::update(const std::string& jobId, const CollectionMemberUpda
     if (update.downloadId.has_value()) {
         member->downloadId = update.downloadId;
     }
+    if (update.result.has_value() && member->status == "installed") {
+        member->result = update.result;
+    } else if (member->status == "failed" || member->status == "pending") {
+        member->result.reset();
+    }
 
     job.lastProgress = deployment::platform::now_ms();
     advancePhase(job);
@@ -317,10 +322,11 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
         }
 
         std::filesystem::path archive;
+        std::optional<std::string> downloadId;
         if (member.task.download.has_value()) {
             auto request = *member.task.download;
             request.id = jobId + ":" + member.ruleId;
-            const auto downloadId = request.id;
+            downloadId = request.id;
 
             update(jobId, {member.ruleId, "downloading", std::nullopt, downloadId, "", false});
             try {
@@ -328,10 +334,10 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
             } catch (const std::exception&) {
                 // A retry reuses the same id; resume if the previous attempt is
                 // still tracked, otherwise surface the add error.
-                if (!downloads.status(downloadId).has_value()) {
+                if (!downloads.status(*downloadId).has_value()) {
                     throw;
                 }
-                downloads.resume(downloadId);
+                downloads.resume(*downloadId);
             }
 
             std::uint64_t lastBytes = 0;
@@ -342,11 +348,11 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
                     throw std::runtime_error("collection job disappeared");
                 }
                 if (snapshot.cancelled || snapshot.paused) {
-                    downloads.cancel(downloadId);
+                    downloads.cancel(*downloadId);
                     return;
                 }
 
-                const auto status = downloads.status(downloadId);
+                const auto status = downloads.status(*downloadId);
                 if (!status.has_value()) {
                     throw std::runtime_error("download disappeared from the core queue");
                 }
@@ -368,7 +374,7 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
                 if (std::chrono::duration_cast<std::chrono::milliseconds>(
                         std::chrono::steady_clock::now() - lastChange)
                         .count() > static_cast<long long>(stallMs) * 2) {
-                    downloads.cancel(downloadId);
+                    downloads.cancel(*downloadId);
                     throw std::runtime_error("download stalled");
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -392,6 +398,8 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
             }
         }
 
+        std::optional<std::string> installationPath;
+        std::vector<std::string> installedFiles;
         if (member.task.install.has_value()) {
             auto install = *member.task.install;
             if (install.tempPath.empty() && member.task.extract.has_value()) {
@@ -406,18 +414,33 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
                                       ".vortex-install-journal" /
                                       (install.operationId + ".jsonl");
             }
+            installationPath = install.destinationPath.string();
+            for (const auto& instruction : install.instructions) {
+                installedFiles.push_back(instruction.destination);
+            }
             const auto report = applyInstall(install);
             if (!report.failures.empty()) {
                 throw std::runtime_error("install failed: " + joinFailures(report.failures));
             }
         }
 
+        CollectionMemberResult result;
+        result.modId = member.task.modId.value_or("");
+        if (installationPath.has_value()) {
+            result.installationPath = *installationPath;
+        }
+        result.downloadId = downloadId;
+        if (!archive.empty()) {
+            result.archivePath = archive.string();
+        }
+        result.files = std::move(installedFiles);
         update(jobId, {member.ruleId,
                        "installed",
                        member.task.modId,
                        std::nullopt,
                        "",
-                       false});
+                       false,
+                       std::move(result)});
     } catch (const std::exception& err) {
         update(jobId, {member.ruleId, "failed", std::nullopt, std::nullopt, err.what(), true});
     } catch (...) {
@@ -563,6 +586,20 @@ json CollectionJobs::status(const CollectionJob& job) {
         }
         if (!member.error.empty()) {
             value["error"] = member.error;
+        }
+        if (member.result.has_value()) {
+            json result = {
+                {"modId", member.result->modId},
+                {"installationPath", member.result->installationPath},
+                {"files", member.result->files},
+            };
+            if (member.result->downloadId.has_value()) {
+                result["downloadId"] = *member.result->downloadId;
+            }
+            if (member.result->archivePath.has_value()) {
+                result["archivePath"] = *member.result->archivePath;
+            }
+            value["result"] = std::move(result);
         }
         members.push_back(std::move(value));
     }
