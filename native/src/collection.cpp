@@ -488,6 +488,8 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
                     throw std::runtime_error("archive path is required for extraction");
                 }
                 extract.archive = archive;
+            } else if (archive.empty()) {
+                archive = extract.archive;
             }
             const auto result =
                 extractArchive(extract.archive, extract.destination, extract.sevenZip,

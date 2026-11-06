@@ -551,6 +551,15 @@ export interface NativeCollectionTask {
     instructions: NativeInstallInstruction[];
     concurrency?: number;
   };
+  copyAll?: boolean;
+  fomod?: {
+    nativeLibrary: string;
+    node: string;
+    script: string;
+    preset?: unknown;
+    pluginPath?: string;
+    scriptPath?: string;
+  };
   modId?: string;
 }
 

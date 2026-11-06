@@ -14,7 +14,11 @@ import {
 } from "@vortex/shared";
 import { parseError, VortexModStagingFolder } from "@vortex/shared";
 import { AlreadyDownloaded, InsufficientDiskSpace } from "@vortex/shared/errors";
-import type { NativeCollectionTask, NativeInstallInstruction } from "@vortex/shared/ipc";
+import type {
+  NativeCollectionJobMember,
+  NativeCollectionTask,
+  NativeInstallInstruction,
+} from "@vortex/shared/ipc";
 import * as _ from "lodash";
 import type { IHashResult, ILookupResult, IRule } from "modmeta-db";
 import Zip from "node-7z";
@@ -206,12 +210,14 @@ import {
   applyInstallNatively,
   attachCollectionTaskNatively,
   cancelCollectionJobNatively,
+  collectionStatusNatively,
   downloadFileNatively,
   executeCollectionMemberNatively,
   extractArchiveNatively,
   listArchiveNatively,
   nextCollectionMembersNatively,
   resolveFomodNatively,
+  runCollectionJobNatively,
   startCollectionNatively,
   updateCollectionMemberNatively,
 } from "./util/nativeDeploy";
@@ -6662,6 +6668,282 @@ class InstallManager {
     return res.filter((dep) => dep !== undefined);
   }
 
+  private downloadPathForDependency(api: IExtensionApi, downloadId: string): string | undefined {
+    const state = api.getState();
+    const download = state.persistent.downloads.files[downloadId];
+    if (download === undefined) {
+      return undefined;
+    }
+    const pathGameId =
+      convertGameIdReverse(knownGames(state), download.game?.[0]) ?? download.game?.[0];
+    if (pathGameId === undefined) {
+      return undefined;
+    }
+    return path.join(downloadPathForGame(state, pathGameId), download.localPath);
+  }
+
+  private importCoreArchive(api: IExtensionApi, archivePath: string): Promise<string | undefined> {
+    return new Promise((resolve) => {
+      api.events.emit(
+        "import-downloads",
+        [archivePath],
+        (ids: string[]) => resolve(ids.find((id) => id !== undefined)),
+        true,
+      );
+    });
+  }
+
+  private finishPrebuiltDependency(
+    api: IExtensionApi,
+    dep: IDependency,
+    modId: string,
+    downloadId: string,
+    gameId: string,
+    sourceModId: string,
+  ): void {
+    this.writeCollectionSession(
+      dep.reference,
+      { type: "installed", modId },
+      dep.sessionRuleId,
+      sourceModId,
+    );
+    this.applyExtraFromRule(api, gameId, modId, {
+      ...dep.extra,
+      fileList: dep.fileList ?? dep.extra?.fileList,
+      installerChoices: dep.installerChoices,
+      patches: dep.patches ?? dep.extra?.patches,
+    });
+
+    const state = api.getState();
+    const batchContext = getBatchContext(
+      ["install-dependencies", "install-collections", "install-recommendations"],
+      "",
+    );
+    const profileId = batchContext?.get<string>("profileId") ?? activeProfile(state)?.id;
+    const profile = profileId ? profileById(state, profileId) : undefined;
+    const actions: any[] = [setModAttribute(gameId, modId, "installedAsDependency", true)];
+    if (profile !== undefined) {
+      actions.push(setModEnabled(profile.id, modId, true));
+    }
+    batchDispatch(api.store, actions);
+
+    dep.mod = state.persistent.mods[gameId]?.[modId];
+    dep.download = downloadId;
+  }
+
+  /**
+   * Two-phase collection run: pre-build one task per pending member (download
+   * and/or extract plus copyAll/FOMOD), let the core own the whole job, then
+   * import archives and register the prepared mods. Falls back to the
+   * collection.next path when a member can't be described as a task.
+   */
+  private async tryRunPrebuiltCollection(
+    api: IExtensionApi,
+    dependencies: IDependency[],
+    gameId: string,
+    sourceModId: string,
+    stagingPath: string,
+    downloads: { [id: string]: IDownload },
+  ): Promise<IDependency[] | undefined> {
+    const state = api.getState();
+    if (state.persistent.mods[gameId]?.[sourceModId]?.type !== "collection") {
+      return undefined;
+    }
+    const members: NativeCollectionJobMember[] = [];
+    const workRoots: string[] = [];
+    const temporaryArchives: string[] = [];
+
+    for (const [index, dep] of dependencies.entries()) {
+      const ruleId = dep.sessionRuleId ?? `requires_${referenceId(dep.reference) ?? "undefined"}`;
+      if (dep.mod !== undefined) {
+        members.push({
+          ruleIndex: index,
+          ruleId,
+          type: "requires",
+          phase: dep.phase ?? 0,
+          ignored: false,
+          status: "installed",
+          modId: dep.mod.id,
+        });
+        continue;
+      }
+      if (dep.extra?.localPath !== undefined) {
+        return undefined;
+      }
+
+      let archivePath: string | undefined;
+      if (dep.download !== undefined && downloads[dep.download]?.state === "finished") {
+        archivePath = this.downloadPathForDependency(api, dep.download);
+      }
+
+      let downloadTask: NativeCollectionTask["download"];
+      if (archivePath === undefined) {
+        const source = dep.lookupResults[0]?.value?.sourceURI;
+        if (typeof source !== "string" || !/^https?:/i.test(source)) {
+          return undefined;
+        }
+        let url: URL;
+        try {
+          url = new URL(source);
+        } catch {
+          return undefined;
+        }
+        const fromPath = path.basename(decodeURIComponent(url.pathname));
+        const fileName =
+          fromPath.length > 0 ? fromPath : `${ruleId.replace(/[^a-z0-9._-]+/gi, "_")}.archive`;
+        const directory = path.join(
+          os.tmpdir(),
+          "vortex-collection-download",
+          `${index}-${shortid()}`,
+        );
+        downloadTask = {
+          directory,
+          fileName,
+          urls: [source],
+          maxRetries: 3,
+        };
+        temporaryArchives.push(path.join(directory, fileName));
+      }
+
+      const choices = dep.installerChoices as { type?: string; options?: unknown } | undefined;
+      const isFomod = choices?.type === "fomod";
+      if (isFomod && choices.options === undefined) {
+        return undefined;
+      }
+
+      const workRoot = path.join(
+        os.tmpdir(),
+        "vortex-collection-run",
+        `${sourceModId}-${index}-${shortid()}`,
+      );
+      const extractDir = path.join(workRoot, "extract");
+      const staged = path.join(workRoot, "staged");
+      workRoots.push(workRoot);
+      const task: NativeCollectionTask = {
+        download: downloadTask,
+        extract:
+          archivePath === undefined
+            ? { destination: extractDir }
+            : { archive: archivePath, destination: extractDir },
+        install: { temp: extractDir, destination: staged, instructions: [] },
+        copyAll: !isFomod,
+        fomod: isFomod
+          ? {
+              nativeLibrary: "",
+              node: "",
+              script: "",
+              preset: choices.options,
+              pluginPath: "",
+              scriptPath: "",
+            }
+          : undefined,
+        modId: dep.reference.tag ?? dep.reference.description ?? ruleId,
+      };
+      members.push({
+        ruleIndex: index,
+        ruleId,
+        type: "requires",
+        phase: dep.phase ?? 0,
+        ignored: false,
+        status: "pending",
+        task,
+      });
+    }
+
+    if (members.every((member) => member.status === "installed" || member.ignored)) {
+      return dependencies;
+    }
+
+    const started = await startCollectionNatively(sourceModId, gameId, members, {
+      concurrency: 5,
+    }).catch(() => undefined);
+    if (started === undefined) {
+      await Promise.all(workRoots.map((root) => fs.removeAsync(root).catch(() => undefined)));
+      return undefined;
+    }
+    this.mNativeCollectionJobs.set(sourceModId, started.jobId);
+    const running = await runCollectionJobNatively(started.jobId).catch(() => undefined);
+    if (running === undefined) {
+      await cancelCollectionJobNatively(started.jobId).catch(() => undefined);
+      await Promise.all(workRoots.map((root) => fs.removeAsync(root).catch(() => undefined)));
+      return undefined;
+    }
+
+    let status = running;
+    const deadline = Date.now() + 30 * 60 * 1000;
+    while (!status.complete && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const current = await collectionStatusNatively(started.jobId).catch(() => undefined);
+      if (current === undefined) {
+        return undefined;
+      }
+      status = current;
+      if (status.cancelled) {
+        return undefined;
+      }
+    }
+    if (!status.complete) {
+      await cancelCollectionJobNatively(started.jobId).catch(() => undefined);
+      return undefined;
+    }
+
+    for (const member of status.members) {
+      if (member.status !== "installed" || member.result === undefined) {
+        continue;
+      }
+      const dep = dependencies[member.ruleIndex];
+      if (dep === undefined) {
+        continue;
+      }
+      let downloadId =
+        dep.download !== undefined && downloads[dep.download]?.state === "finished"
+          ? dep.download
+          : undefined;
+      if (downloadId === undefined && member.result.archivePath !== undefined) {
+        downloadId = await this.importCoreArchive(api, member.result.archivePath);
+      }
+      if (downloadId === undefined) {
+        log("warn", "core collection member has no registerable download", {
+          sourceModId,
+          ruleId: member.ruleId,
+        });
+        continue;
+      }
+      try {
+        const modId = await this.installModAsync(
+          dep.reference,
+          api,
+          downloadId,
+          { choices: dep.installerChoices, patches: dep.patches },
+          dep.fileList,
+          gameId,
+          true,
+          sourceModId,
+          member.result.installationPath,
+        );
+        this.finishPrebuiltDependency(api, dep, modId, downloadId, gameId, sourceModId);
+      } catch (err) {
+        log("warn", "failed to register core collection member", {
+          sourceModId,
+          ruleId: member.ruleId,
+          error: getErrorMessageOrDefault(err),
+        });
+        this.writeCollectionSession(
+          dep.reference,
+          { type: "status", status: "failed" },
+          dep.sessionRuleId,
+          sourceModId,
+        );
+      }
+    }
+
+    await Promise.all(workRoots.map((root) => fs.removeAsync(root).catch(() => undefined)));
+    await Promise.all(
+      temporaryArchives.map((archive) => fs.removeAsync(archive).catch(() => undefined)),
+    );
+    return dependencies;
+  }
+
   private async doInstallDependencies(
     api: IExtensionApi,
     gameId: string,
@@ -7122,6 +7404,20 @@ class InstallManager {
     const phases: { [phase: number]: IDependency[] } = {};
 
     dependencies.forEach((dep) => setdefault(phases, dep.phase ?? 0, []).push(dep));
+
+    if (!recommended && dependencies.length > 0) {
+      const prebuilt = await this.tryRunPrebuiltCollection(
+        api,
+        dependencies,
+        gameId,
+        sourceModId,
+        stagingPath,
+        downloads,
+      );
+      if (prebuilt !== undefined) {
+        return prebuilt;
+      }
+    }
 
     if (!recommended && dependencies.length > 0) {
       const previousJob = this.mNativeCollectionJobs.get(sourceModId);

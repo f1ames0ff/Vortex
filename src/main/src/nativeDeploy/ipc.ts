@@ -172,7 +172,48 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle(
     "nativeDeploy:collectionStart",
-    (_event, request: NativeCollectionStartRequest) => nativeCoreClient().collectionStart(request),
+    (_event, request: NativeCollectionStartRequest) => {
+      const paths = nodeHelperPaths();
+      const sevenZip = resolveSevenZipPath();
+      const curl = process.env.VORTEX_CURL_PATH ?? "curl";
+      const members = request.members.map((member) => {
+        if (member.task === undefined) {
+          return member;
+        }
+        return {
+          ...member,
+          task: {
+            ...member.task,
+            download:
+              member.task.download === undefined
+                ? undefined
+                : { ...member.task.download, curl: member.task.download.curl ?? curl },
+            extract:
+              member.task.extract === undefined
+                ? undefined
+                : {
+                    ...member.task.extract,
+                    sevenZip: member.task.extract.sevenZip ?? sevenZip,
+                  },
+            fomod:
+              member.task.fomod === undefined
+                ? undefined
+                : {
+                    ...member.task.fomod,
+                    node:
+                      member.task.fomod.node || process.env.VORTEX_NODE_PATH || process.execPath,
+                    script: member.task.fomod.script || paths.script,
+                    nativeLibrary: member.task.fomod.nativeLibrary || paths.fomod,
+                    pluginPath:
+                      member.task.fomod.pluginPath || member.task.extract?.destination || "",
+                    scriptPath:
+                      member.task.fomod.scriptPath || member.task.extract?.destination || "",
+                  },
+          },
+        };
+      });
+      return nativeCoreClient().collectionStart({ ...request, members });
+    },
   );
 
   betterIpcMain.handle("nativeDeploy:collectionStatus", (_event, jobId: string) =>

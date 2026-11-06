@@ -90,7 +90,9 @@ function everyMemberHasTask(status: NativeCollectionJobStatus | undefined): bool
   return (
     status !== undefined &&
     status.members.length > 0 &&
-    status.members.every((member) => member.ignored || member.hasTask === true)
+    status.members.every(
+      (member) => member.ignored || member.status === "installed" || member.hasTask === true,
+    )
   );
 }
 
