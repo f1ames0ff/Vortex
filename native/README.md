@@ -335,10 +335,15 @@ Known integration gaps for the next slice:
 - Single-mod activation and move deployment use the core when its
   `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
   back to the TypeScript activator.
-- The `node-helper` C-ABI module resolves FOMOD presets and metadata requests,
-  but `InstallManager` does not call it yet; the existing TypeScript install
-  path is still the production consumer. The helper also needs the packaged
-  Electron-as-Node path (`ELECTRON_RUN_AS_NODE`) before it can replace it.
+- The `node-helper` C-ABI module resolves FOMOD presets and metadata requests.
+  `InstallManager` now uses `fomod.resolve` for collection members with a
+  FOMOD preset: it extracts the archive, resolves copy instructions, attaches a
+  `collection.task` and executes it in the core. Members without a preset or
+  with unsupported instructions still use the TypeScript installer.
+- The packaged app runs the helper through Electron-as-Node and ships the
+  Native AOT FOMOD addon plus `node-gyp-build` under `resources/native/helpers`.
+  `VORTEX_NODE_PATH` can point at a standalone Node binary for environments
+  where Electron-as-Node is unavailable.
 - External-change detection is in the core for hardlink/symlink/move; the
   other deployment methods still use their TypeScript activator.
 - Downloads use the external `curl` binary. Linux distributions ship it;
