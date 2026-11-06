@@ -928,3 +928,53 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
     server.close();
   }
 });
+
+test("runs a collection with prebuilt member tasks", async () => {
+  const work = join(root, "prebuilt-run");
+  const source = join(work, "source");
+  const temp = join(work, "temp");
+  const destination = join(work, "staging", "ModA");
+  mkdirSync(source, { recursive: true });
+  writeFileSync(join(source, "prebuilt.txt"), "prebuilt-content");
+  const archive = join(work, "prebuilt.zip");
+  execFileSync(sevenZip, ["a", "-tzip", archive, "prebuilt.txt"], {
+    cwd: source,
+    stdio: "ignore",
+  });
+
+  const started = await client.collectionStart({
+    collectionId: "prebuilt",
+    gameId: "skyrimse",
+    concurrency: 1,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_prebuilt",
+        type: "requires",
+        phase: 1,
+        ignored: false,
+        status: "pending",
+        task: {
+          modId: "PrebuiltMod",
+          extract: { archive, destination: temp, sevenZip },
+          install: { temp, destination, instructions: [] },
+          copyAll: true,
+        },
+      },
+    ],
+  });
+  assert.equal(started.status.members[0].hasTask, true);
+
+  await client.collectionRun(started.jobId);
+  const deadline = Date.now() + 10000;
+  let status = await client.collectionStatus(started.jobId);
+  while (!status.complete && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    status = await client.collectionStatus(started.jobId);
+  }
+  assert.equal(status.complete, true);
+  assert.equal(status.members[0].status, "installed", status.members[0].error);
+  assert.equal(status.members[0].result.modId, "PrebuiltMod");
+  assert.equal(readFileSync(join(destination, "prebuilt.txt"), "utf8"), "prebuilt-content");
+});
