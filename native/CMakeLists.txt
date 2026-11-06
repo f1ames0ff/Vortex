@@ -37,6 +37,12 @@ target_include_directories(vortex_deployment
 
 find_package(Threads REQUIRED)
 
+add_library(vortex_module_support
+    src/process.cpp
+)
+target_include_directories(vortex_module_support PUBLIC include third_party)
+set_target_properties(vortex_module_support PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 add_library(vortex_core
     src/archive.cpp
     src/collection.cpp
@@ -47,10 +53,9 @@ add_library(vortex_core
     src/module_host.cpp
     src/path_safety.cpp
     src/plugins.cpp
-    src/process.cpp
     src/status.cpp
 )
-target_link_libraries(vortex_core PUBLIC vortex_deployment Threads::Threads ${CMAKE_DL_LIBS})
+target_link_libraries(vortex_core PUBLIC vortex_deployment vortex_module_support Threads::Threads ${CMAKE_DL_LIBS})
 target_include_directories(vortex_core PUBLIC include)
 
 add_library(vortex_game
@@ -82,6 +87,10 @@ endif()
 target_compile_definitions(vortex-deployment-tests PRIVATE
     VORTEX_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
 )
+
+add_library(vortex_node_helper_module MODULE modules/node_helper.cpp)
+target_link_libraries(vortex_node_helper_module PRIVATE vortex_module_support)
+target_include_directories(vortex_node_helper_module PRIVATE include third_party)
 
 add_library(vortex_test_echo_module MODULE tests/modules/echo_module.cpp)
 target_include_directories(vortex_test_echo_module PRIVATE include)

@@ -226,9 +226,13 @@ JSON-in/JSON-out `invoke` function, and owns result/error strings through
 `module.list` and calls them with `module.call`.
 
 This is the boundary intended for domain code that must stay outside the core
-or be supplied as a plugin: metadata lookup adapters and a wrapper around the
-existing FOMOD/.NET host. The core does not embed the .NET FOMOD installer or
-the LevelDB metadata store.
+or be supplied as a plugin. `modules/node_helper.cpp` is the first wrapper: it
+loads `libvortex_node_helper_module` and runs `helpers/vortex-helper.mjs`,
+which exposes `fomod.testSupported`, `fomod.resolve` and `metadata.lookup`.
+The FOMOD helper loads the existing Native AOT
+`@nexusmods/fomod-installer-native` addon and resolves a preset headlessly;
+metadata lookup performs the Nexus files request. The core still does not embed
+the .NET FOMOD installer or the LevelDB metadata store.
 
 `ping` also returns `protocol` and `capabilities`, so the shell can reject a
 stale core before calling a method it does not support.
@@ -331,9 +335,10 @@ Known integration gaps for the next slice:
 - Single-mod activation and move deployment use the core when its
   `deploy.single`/`deploy.move` capabilities are present; otherwise they fall
   back to the TypeScript activator.
-- The C-ABI module host is implemented; no FOMOD or metadata module ships with
-  it yet. FOMOD is still executed by `@nexusmods/fomod-installer-native`, and
-  metadata lookup by modmeta-db/Nexus API, both outside the core.
+- The `node-helper` C-ABI module resolves FOMOD presets and metadata requests,
+  but `InstallManager` does not call it yet; the existing TypeScript install
+  path is still the production consumer. The helper also needs the packaged
+  Electron-as-Node path (`ELECTRON_RUN_AS_NODE`) before it can replace it.
 - External-change detection is in the core for hardlink/symlink/move; the
   other deployment methods still use their TypeScript activator.
 - Downloads use the external `curl` binary. Linux distributions ship it;

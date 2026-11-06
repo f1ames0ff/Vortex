@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+} from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -751,4 +759,120 @@ test("loads and calls a C-ABI module", { skip: !existsSync(echoModule) }, async 
   assert.deepEqual(echoed.result, { value: 42 });
 
   await assert.rejects(client.moduleCall("echo", "missing", {}), /unknown echo-module method/);
+});
+
+test("resolves FOMOD choices and metadata through the node-helper C-ABI module", async () => {
+  const modulePath =
+    process.env.VORTEX_NODE_HELPER_MODULE ??
+    join(
+      dirname(corePath),
+      process.platform === "win32"
+        ? "vortex_node_helper_module.dll"
+        : "libvortex_node_helper_module.so",
+    );
+  const helperScript = join(dirname(corePath), "..", "..", "helpers", "vortex-helper.mjs");
+
+  const packageRoot = join(root, "fomod-package");
+  const fomodDir = join(packageRoot, "fomod");
+  mkdirSync(fomodDir, { recursive: true });
+  mkdirSync(join(packageRoot, "Data"), { recursive: true });
+  writeFileSync(
+    join(fomodDir, "ModuleConfig.xml"),
+    `<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+       <moduleName>Parity FOMOD</moduleName>
+       <requiredInstallFiles><file source="Data/required.txt" destination="required.txt"/></requiredInstallFiles>
+       <installSteps><installStep name="Step"><optionalFileGroups>
+         <group name="Group" type="SelectExactlyOne"><plugins>
+           <plugin name="Option A"><description>Option A</description>
+             <files><file source="Data/a.txt" destination="a.txt"/></files>
+             <typeDescriptor><type name="Optional"/></typeDescriptor></plugin>
+         </plugins></group>
+       </optionalFileGroups></installStep></installSteps>
+     </config>`,
+  );
+  writeFileSync(join(packageRoot, "Data", "required.txt"), "required");
+  writeFileSync(join(packageRoot, "Data", "a.txt"), "a");
+
+  const nativeRoot = join(dirname(corePath), "..", "..", "..");
+  const fomodPackage =
+    process.env.VORTEX_FOMOD_NATIVE ??
+    (() => {
+      const pnpm = join(nativeRoot, "node_modules", ".pnpm");
+      const directory = readdirSync(pnpm).find((name) =>
+        name.startsWith("@nexusmods+fomod-installer-native@"),
+      );
+      return directory === undefined
+        ? undefined
+        : join(
+            pnpm,
+            directory,
+            "node_modules",
+            "@nexusmods",
+            "fomod-installer-native",
+            "dist",
+            "index.js",
+          );
+    })();
+
+  if (!existsSync(modulePath) || !existsSync(helperScript) || fomodPackage === undefined) {
+    return;
+  }
+  await client.moduleLoad(modulePath);
+
+  const supported = await client.moduleCall("node-helper", "call", {
+    node: process.execPath,
+    script: helperScript,
+    request: {
+      method: "fomod.testSupported",
+      params: {
+        nativeLibrary: fomodPackage,
+        files: ["fomod/ModuleConfig.xml"],
+        allowedTypes: ["XmlScript"],
+      },
+    },
+  });
+  assert.equal(supported.result.supported, true);
+
+  const resolved = await client.moduleCall("node-helper", "call", {
+    node: process.execPath,
+    script: helperScript,
+    request: {
+      method: "fomod.resolve",
+      params: {
+        nativeLibrary: fomodPackage,
+        files: ["fomod/ModuleConfig.xml", "Data/required.txt", "Data/a.txt"],
+        stopPatterns: [],
+        pluginPath: packageRoot,
+        scriptPath: packageRoot,
+        preset: [
+          { name: "Step", groups: [{ name: "Group", choices: [{ name: "Option A", idx: 0 }] }] },
+        ],
+        validate: false,
+      },
+    },
+  });
+  const sources = resolved.result.instructions
+    .filter((instruction) => instruction.type === "copy")
+    .map((instruction) => instruction.source)
+    .sort();
+  assert.deepEqual(sources, ["Data/a.txt", "Data/required.txt"]);
+
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ mod_id: 7, file_id: 9 }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const metadata = await client.moduleCall("node-helper", "call", {
+      node: process.execPath,
+      script: helperScript,
+      request: {
+        method: "metadata.lookup",
+        params: { endpoint: `http://127.0.0.1:${server.address().port}/meta.json` },
+      },
+    });
+    assert.equal(metadata.result.metadata.mod_id, 7);
+  } finally {
+    server.close();
+  }
 });
