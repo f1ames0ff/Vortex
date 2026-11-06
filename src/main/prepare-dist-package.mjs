@@ -1,5 +1,6 @@
 import { createWriteStream, existsSync } from "node:fs";
-import { access, chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -98,6 +99,18 @@ async function prepareNativeCore() {
   await mkdir(dirname(stagedHelper), { recursive: true });
   await copyFile(helperSource, stagedHelper);
   console.log(`staged native helper: ${stagedHelper}`);
+
+  // A packaged app runs the helper through the app's Node/Electron runtime, so
+  // the FOMOD addon and node-gyp-build must be outside app.asar.
+  const require = createRequire(import.meta.url);
+  const fomodEntry = require.resolve("@nexusmods/fomod-installer-native");
+  const fomodRoot = resolve(dirname(fomodEntry), "..");
+  const nodeModules = resolve(MAIN_DIR, "temp", "native", "helpers", "node_modules");
+  await cp(fomodRoot, resolve(nodeModules, "@nexusmods", "fomod-installer-native"), {
+    recursive: true,
+  });
+  const gypEntry = createRequire(resolve(fomodRoot, "package.json")).resolve("node-gyp-build");
+  await cp(dirname(gypEntry), resolve(nodeModules, "node-gyp-build"), { recursive: true });
 }
 
 async function prepareWin() {

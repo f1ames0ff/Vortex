@@ -84,7 +84,12 @@ int invoke(const char* method, const char* rawParams, char** result, char** erro
             throw std::runtime_error(process.output.empty() ? "node helper failed"
                                                             : process.output);
         }
-        const auto response = json::parse(process.output);
+        const auto jsonStart = process.output.find_first_of('{');
+        if (jsonStart == std::string::npos) {
+            throw std::runtime_error(process.output.empty() ? "node helper produced no output"
+                                                            : process.output);
+        }
+        const auto response = json::parse(process.output.substr(jsonStart));
         if (response.contains("error")) {
             throw std::runtime_error(response["error"].get<std::string>());
         }

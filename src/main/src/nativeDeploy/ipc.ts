@@ -1,5 +1,6 @@
 /** Main-process IPC surface for the native deployment core. */
 
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 import { getErrorMessageOrDefault } from "@vortex/shared";
@@ -56,7 +57,18 @@ function nodeHelperPaths(): { module: string; script: string; fomod: string } {
     : path.join(root, "helpers", "vortex-helper.mjs");
   // Keep the app.asar path: Electron's asar fs shim resolves the package's
   // node-gyp-build dependency and redirects the native .node load itself.
-  const fomod = require.resolve("@nexusmods/fomod-installer-native");
+  const packagedFomod = path.join(
+    root,
+    "helpers",
+    "node_modules",
+    "@nexusmods",
+    "fomod-installer-native",
+    "dist",
+    "index.js",
+  );
+  const fomod = existsSync(packagedFomod)
+    ? packagedFomod
+    : require.resolve("@nexusmods/fomod-installer-native");
   return { module: modulePath, script: scriptPath, fomod };
 }
 
@@ -255,8 +267,8 @@ export function initNativeDeployIpc(): void {
         }
       }
       const result = await core.moduleCall("node-helper", "call", {
-        node: process.execPath,
-        env: { ELECTRON_RUN_AS_NODE: "1" },
+        node: process.env.VORTEX_NODE_PATH ?? process.execPath,
+        env: process.env.VORTEX_NODE_PATH === undefined ? { ELECTRON_RUN_AS_NODE: "1" } : undefined,
         script: paths.script,
         request: {
           method: "fomod.resolve",
