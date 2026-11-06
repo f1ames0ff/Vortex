@@ -1,10 +1,12 @@
 #include "vortex/core/collection.hpp"
 
 #include "vortex/core/archive.hpp"
+#include "vortex/core/process.hpp"
 #include "vortex/deployment/platform.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <set>
 #include <sstream>
 #include <thread>
@@ -71,6 +73,104 @@ std::size_t statusCount(const CollectionJob& job, const std::string& status) {
     return static_cast<std::size_t>(std::count_if(
         job.members.begin(), job.members.end(),
         [&](const auto& member) { return member.status == status; }));
+}
+
+std::vector<std::string> listTree(const std::filesystem::path& root) {
+    std::vector<std::string> result;
+    std::error_code ec;
+    std::filesystem::recursive_directory_iterator iterator(
+        root, std::filesystem::directory_options::skip_permission_denied, ec);
+    if (ec) {
+        throw std::runtime_error("list extracted archive: " + ec.message());
+    }
+    for (const auto& entry : iterator) {
+        if (entry.is_directory()) {
+            continue;
+        }
+        const auto rel = std::filesystem::relative(entry.path(), root, ec);
+        if (ec) {
+            continue;
+        }
+        result.push_back(rel.generic_string());
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+std::vector<InstallInstruction> resolveFomod(const CollectionFomodTask& fomod,
+                                             const std::filesystem::path& extracted) {
+    json files = json::array();
+    for (const auto& file : listTree(extracted)) {
+        files.push_back(file);
+    }
+    json params = {
+        {"nativeLibrary", fomod.nativeLibrary},
+        {"files", std::move(files)},
+        {"stopPatterns", json::array()},
+        {"validate", false},
+    };
+    if (!fomod.pluginPath.empty()) {
+        params["pluginPath"] = fomod.pluginPath;
+    }
+    if (!fomod.scriptPath.empty()) {
+        params["scriptPath"] = fomod.scriptPath;
+    }
+    if (!fomod.preset.empty()) {
+        params["preset"] = json::parse(fomod.preset);
+    }
+    const json request = {{"method", "fomod.resolve"}, {"params", params}};
+
+    const auto requestPath =
+        std::filesystem::temp_directory_path() /
+        std::filesystem::path("vortex-fomod-" +
+                              std::to_string(
+                                  std::chrono::steady_clock::now().time_since_epoch().count()) +
+                              ".json");
+    {
+        std::ofstream output(requestPath, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error("failed to create FOMOD request");
+        }
+        output << request.dump();
+        output.flush();
+        if (!output) {
+            throw std::runtime_error("failed to write FOMOD request");
+        }
+    }
+
+    const auto process = runProcess(
+        std::filesystem::path(fomod.node), {fomod.script, "--request", requestPath.string()},
+        nullptr, {{"ELECTRON_RUN_AS_NODE", "1"}});
+    std::error_code cleanup;
+    std::filesystem::remove(requestPath, cleanup);
+    if (process.exitCode != 0) {
+        throw std::runtime_error(process.output.empty() ? "FOMOD helper failed" : process.output);
+    }
+    const auto start = process.output.find_first_of('{');
+    if (start == std::string::npos) {
+        throw std::runtime_error("FOMOD helper produced no JSON");
+    }
+    const auto response = json::parse(process.output.substr(start));
+    if (response.contains("error")) {
+        throw std::runtime_error(response["error"].get<std::string>());
+    }
+    const auto result = response.value("result", json::object());
+    std::vector<InstallInstruction> instructions;
+    if (result.contains("instructions") && result["instructions"].is_array()) {
+        for (const auto& instruction : result["instructions"]) {
+            if (!instruction.is_object() || instruction.value("type", "") != "copy") {
+                continue;
+            }
+            InstallInstruction copy;
+            copy.type = InstallInstructionType::Copy;
+            copy.source = instruction.value("source", std::string{});
+            copy.destination = instruction.value("destination", std::string{});
+            if (!copy.source.empty() && !copy.destination.empty()) {
+                instructions.push_back(std::move(copy));
+            }
+        }
+    }
+    return instructions;
 }
 
 std::string joinFailures(const std::vector<InstallFailure>& failures) {
@@ -328,7 +428,7 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
             request.id = jobId + ":" + member.ruleId;
             downloadId = request.id;
 
-            update(jobId, {member.ruleId, "downloading", std::nullopt, downloadId, "", false});
+            update(jobId, {member.ruleId, "downloading", std::nullopt, downloadId, "", false, std::nullopt});
             try {
                 downloads.add(request);
             } catch (const std::exception&) {
@@ -400,13 +500,29 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
 
         std::optional<std::string> installationPath;
         std::vector<std::string> installedFiles;
-        if (member.task.install.has_value()) {
-            auto install = *member.task.install;
+        if (member.task.install.has_value() || member.task.copyAll ||
+            member.task.fomod.has_value()) {
+            InstallRequest install =
+                member.task.install.value_or(InstallRequest{});
             if (install.tempPath.empty() && member.task.extract.has_value()) {
                 install.tempPath = member.task.extract->destination;
             }
             if (install.destinationPath.empty()) {
                 throw std::runtime_error("install.destination is required");
+            }
+            if (member.task.copyAll) {
+                for (const auto& file : listTree(install.tempPath)) {
+                    install.instructions.push_back(
+                        {InstallInstructionType::Copy, file, file, "", false});
+                }
+            }
+            if (member.task.fomod.has_value()) {
+                const auto resolved = resolveFomod(*member.task.fomod, install.tempPath);
+                install.instructions.insert(install.instructions.end(), resolved.begin(),
+                                            resolved.end());
+            }
+            if (install.instructions.empty()) {
+                throw std::runtime_error("collection task produced no install instructions");
             }
             install.operationId = jobId + "-" + member.ruleId;
             if (install.journalPath.empty()) {
@@ -442,10 +558,10 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
                        false,
                        std::move(result)});
     } catch (const std::exception& err) {
-        update(jobId, {member.ruleId, "failed", std::nullopt, std::nullopt, err.what(), true});
+        update(jobId, {member.ruleId, "failed", std::nullopt, std::nullopt, err.what(), true, std::nullopt});
     } catch (...) {
         update(jobId, {member.ruleId, "failed", std::nullopt, std::nullopt,
-                       "unknown collection task error", true});
+                       "unknown collection task error", true, std::nullopt});
     }
 }
 

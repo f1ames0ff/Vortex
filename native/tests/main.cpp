@@ -958,8 +958,7 @@ void testCollectionRun() {
     vortex::core::InstallRequest install;
     install.tempPath = temp;
     install.destinationPath = destination;
-    install.instructions.push_back(
-        {vortex::core::InstallInstructionType::Copy, "a.txt", "a.txt", "", false});
+    member.task.copyAll = true;
     member.task.install = install;
     member.task.modId = "ModA";
 

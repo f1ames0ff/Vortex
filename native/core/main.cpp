@@ -739,6 +739,24 @@ vortex::core::CollectionTask readCollectionTask(const json& value) {
         }
         task.extract = std::move(extract);
     }
+    task.copyAll = value.value("copyAll", false);
+    if (value.contains("fomod") && value["fomod"].is_object()) {
+        const auto& raw = value["fomod"];
+        vortex::core::CollectionFomodTask fomod;
+        fomod.nativeLibrary = raw.value("nativeLibrary", std::string{});
+        fomod.node = raw.value("node", std::string{});
+        fomod.script = raw.value("script", std::string{});
+        fomod.pluginPath = raw.value("pluginPath", std::string{});
+        fomod.scriptPath = raw.value("scriptPath", std::string{});
+        if (raw.contains("preset")) {
+            fomod.preset = raw["preset"].dump();
+        }
+        if (fomod.nativeLibrary.empty() || fomod.node.empty() || fomod.script.empty()) {
+            throw std::runtime_error(
+                "collection fomod task requires nativeLibrary, node and script");
+        }
+        task.fomod = std::move(fomod);
+    }
     if (value.contains("install") && value["install"].is_object()) {
         const auto& raw = value["install"];
         vortex::core::InstallRequest install;

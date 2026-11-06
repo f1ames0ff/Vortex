@@ -24,10 +24,21 @@ struct CollectionExtractTask {
     std::string password;
 };
 
+struct CollectionFomodTask {
+    std::string nativeLibrary;
+    std::string node;
+    std::string script;
+    std::string preset;
+    std::string pluginPath;
+    std::string scriptPath;
+};
+
 struct CollectionTask {
     std::optional<DownloadRequest> download;
     std::optional<CollectionExtractTask> extract;
     std::optional<InstallRequest> install;
+    std::optional<CollectionFomodTask> fomod;
+    bool copyAll = false;
     std::optional<std::string> modId;
 };
 

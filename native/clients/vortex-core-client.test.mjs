@@ -659,11 +659,8 @@ test("executes a collection member through core workers", async () => {
               maxRetries: 0,
             },
             extract: { destination: temp, sevenZip },
-            install: {
-              temp,
-              destination,
-              instructions: [{ type: "copy", source: "a.txt", destination: "a.txt" }],
-            },
+            copyAll: true,
+            install: { temp, destination, instructions: [] },
           },
         },
       ],
@@ -861,6 +858,56 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
     .map((instruction) => instruction.source)
     .sort();
   assert.deepEqual(sources, ["Data/a.txt", "Data/required.txt"]);
+
+  const archive = join(root, "fomod-worker.zip");
+  execFileSync(sevenZip, ["a", "-tzip", archive, "fomod", "Data"], {
+    cwd: packageRoot,
+    stdio: "ignore",
+  });
+  const coreExtract = join(root, "fomod-worker-extract");
+  const coreDestination = join(root, "fomod-worker-staging");
+  const started = await client.collectionStart({
+    collectionId: "fomod",
+    gameId: "skyrimse",
+    concurrency: 1,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_fomod",
+        type: "requires",
+        phase: 1,
+        ignored: false,
+        status: "pending",
+        task: {
+          modId: "FomodWorker",
+          extract: { archive, destination: coreExtract, sevenZip },
+          install: { temp: coreExtract, destination: coreDestination, instructions: [] },
+          fomod: {
+            nativeLibrary: fomodPackage,
+            node: process.execPath,
+            script: helperScript,
+            preset: [
+              {
+                name: "Step",
+                groups: [{ name: "Group", choices: [{ name: "Option A", idx: 0 }] }],
+              },
+            ],
+            pluginPath: packageRoot,
+            scriptPath: packageRoot,
+          },
+        },
+      },
+    ],
+  });
+  const worker = await client.collectionExecute({
+    jobId: started.jobId,
+    ruleId: "requires_fomod",
+  });
+  assert.equal(worker.members[0].status, "installed", worker.members[0].error);
+  assert.deepEqual(worker.members[0].result.files.sort(), ["a.txt", "required.txt"]);
+  assert.equal(readFileSync(join(coreDestination, "a.txt"), "utf8"), "a");
+  assert.equal(readFileSync(join(coreDestination, "required.txt"), "utf8"), "required");
 
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
