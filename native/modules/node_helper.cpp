@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 
 namespace {
@@ -42,6 +43,14 @@ int invoke(const char* method, const char* rawParams, char** result, char** erro
         const auto params = json::parse(rawParams == nullptr ? "{}" : rawParams);
         const auto node = params.value("node", std::string("node"));
         const auto script = params.value("script", std::string{});
+        std::map<std::string, std::string> environment;
+        if (params.contains("env") && params["env"].is_object()) {
+            for (const auto& [key, value] : params["env"].items()) {
+                if (value.is_string()) {
+                    environment[key] = value.get<std::string>();
+                }
+            }
+        }
         if (script.empty()) {
             throw std::runtime_error("node-helper requires params.script");
         }
@@ -67,7 +76,7 @@ int invoke(const char* method, const char* rawParams, char** result, char** erro
         }
 
         const auto process = vortex::core::runProcess(
-            fs::path(node), {script, "--request", requestPath});
+            fs::path(node), {script, "--request", requestPath}, nullptr, environment);
         std::error_code cleanup;
         fs::remove(requestPath, cleanup);
 

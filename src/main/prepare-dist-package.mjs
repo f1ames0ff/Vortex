@@ -75,6 +75,29 @@ async function prepareNativeCore() {
     await chmod(staged, 0o755);
   }
   console.log(`staged native core: ${staged}`);
+
+  const moduleName =
+    process.platform === "win32"
+      ? "vortex_node_helper_module.dll"
+      : "libvortex_node_helper_module.so";
+  const moduleSource = resolve(nativeRoot, "build", "release", moduleName);
+  if (!existsSync(moduleSource)) {
+    throw new Error(
+      `missing node-helper module: ${moduleSource}\n` +
+        "Build it with `pnpm native:build` before packaging.",
+    );
+  }
+  const stagedModule = resolve(MAIN_DIR, "temp", "native", moduleName);
+  await copyFile(moduleSource, stagedModule);
+
+  const helperSource = resolve(nativeRoot, "helpers", "vortex-helper.mjs");
+  if (!existsSync(helperSource)) {
+    throw new Error(`missing node helper script: ${helperSource}`);
+  }
+  const stagedHelper = resolve(MAIN_DIR, "temp", "native", "helpers", "vortex-helper.mjs");
+  await mkdir(dirname(stagedHelper), { recursive: true });
+  await copyFile(helperSource, stagedHelper);
+  console.log(`staged native helper: ${stagedHelper}`);
 }
 
 async function prepareWin() {

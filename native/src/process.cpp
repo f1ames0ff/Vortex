@@ -69,7 +69,8 @@ std::wstring widen(const std::string& value) {
 
 ProcessResult runProcess(const std::filesystem::path& executable,
                          const std::vector<std::string>& arguments,
-                         const std::atomic<bool>* cancel) {
+                         const std::atomic<bool>* cancel,
+                         const std::map<std::string, std::string>& environment) {
     ProcessResult result;
 
 #ifdef _WIN32
@@ -173,6 +174,11 @@ ProcessResult runProcess(const std::filesystem::path& executable,
         }
         argv.push_back(nullptr);
 
+#ifndef _WIN32
+        for (const auto& entry : environment) {
+            ::setenv(entry.first.c_str(), entry.second.c_str(), 1);
+        }
+#endif
         ::execvp(executable.c_str(), argv.data());
         ::_exit(127);
     }

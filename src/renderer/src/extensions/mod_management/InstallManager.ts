@@ -211,6 +211,7 @@ import {
   extractArchiveNatively,
   listArchiveNatively,
   nextCollectionMembersNatively,
+  resolveFomodNatively,
   startCollectionNatively,
   updateCollectionMemberNatively,
 } from "./util/nativeDeploy";
@@ -2523,7 +2524,6 @@ class InstallManager {
       return undefined;
     }
     if (
-      dep.installerChoices !== undefined ||
       dep.fileList !== undefined ||
       dep.patches !== undefined ||
       dep.extra?.instructions !== undefined
@@ -2556,28 +2556,75 @@ class InstallManager {
     }
     const normalized = (value: string) => value.replace(/\\/g, "/").toLowerCase();
     if (
-      files.some(
-        (entry) =>
-          normalized(entry.path).endsWith("fomod/moduleconfig.xml") ||
-          normalized(entry.path).endsWith(".vortex_override_instructions.json"),
-      )
+      files.some((entry) => normalized(entry.path).endsWith(".vortex_override_instructions.json"))
     ) {
+      return undefined;
+    }
+    const isFomod = files.some((entry) =>
+      normalized(entry.path).endsWith("fomod/moduleconfig.xml"),
+    );
+    const choices = dep.installerChoices as { type?: string; options?: unknown } | undefined;
+    if (isFomod && choices?.type !== "fomod") {
       return undefined;
     }
 
     const workRoot = path.join(os.tmpdir(), "vortex-native-install", shortid());
     const extractDir = path.join(workRoot, "extract");
     const staged = path.join(workRoot, "staged");
+
+    let instructions: NativeInstallInstruction[];
+    let extractTask: NativeCollectionTask["extract"];
+    if (isFomod) {
+      const extraction = await extractArchiveNatively(archivePath, extractDir).catch(
+        () => undefined,
+      );
+      if (extraction === undefined || extraction.code !== 0) {
+        await fs.removeAsync(workRoot).catch(() => undefined);
+        return undefined;
+      }
+      const resolved = await resolveFomodNatively({
+        files: files.map((entry) => entry.path),
+        stopPatterns: [],
+        pluginPath: extractDir,
+        scriptPath: extractDir,
+        preset: choices.options,
+        validate: false,
+      }).catch(() => undefined);
+      if (resolved === undefined) {
+        await fs.removeAsync(workRoot).catch(() => undefined);
+        return undefined;
+      }
+      instructions = resolved.instructions
+        .filter(
+          (instruction) =>
+            instruction.type === "copy" &&
+            instruction.source !== undefined &&
+            instruction.destination !== undefined,
+        )
+        .map((instruction) => ({
+          type: "copy",
+          source: instruction.source!,
+          destination: instruction.destination!,
+        }));
+      if (instructions.length === 0) {
+        await fs.removeAsync(workRoot).catch(() => undefined);
+        return undefined;
+      }
+    } else {
+      instructions = files.map((entry) => ({
+        type: "copy",
+        source: entry.path,
+        destination: entry.path,
+      }));
+      extractTask = { destination: extractDir };
+    }
+
     const task: NativeCollectionTask = {
-      extract: { destination: extractDir },
+      extract: extractTask,
       install: {
         temp: extractDir,
         destination: staged,
-        instructions: files.map((entry) => ({
-          type: "copy",
-          source: entry.path,
-          destination: entry.path,
-        })),
+        instructions,
       },
     };
 

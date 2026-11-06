@@ -547,3 +547,25 @@ export interface NativeCollectionTaskRequest {
   ruleId: string;
   task: NativeCollectionTask;
 }
+
+export interface NativeFomodResolveRequest {
+  files: string[];
+  stopPatterns?: string[];
+  pluginPath?: string;
+  scriptPath?: string;
+  preset?: unknown;
+  validate?: boolean;
+}
+
+export interface NativeFomodInstruction {
+  type: string;
+  source?: string;
+  destination?: string;
+  priority?: number;
+  [key: string]: unknown;
+}
+
+export interface NativeFomodResolveResult {
+  message?: string;
+  instructions: NativeFomodInstruction[];
+}

@@ -58,6 +58,8 @@ import type {
   NativeDeploySingleRequest,
   NativeExternalChangesRequest,
   NativeExternalChangesResult,
+  NativeFomodResolveRequest,
+  NativeFomodResolveResult,
   NativeDeployStatus,
   NativeHashFilesRequest,
   NativeHashFilesResult,
@@ -648,6 +650,9 @@ export interface NativeDeployApi {
 
   /** Compares a manifest with staging and target files. */
   externalChanges(request: NativeExternalChangesRequest): Promise<NativeExternalChangesResult>;
+
+  /** Resolves a FOMOD preset through the node-helper C-ABI module. */
+  fomodResolve(request: NativeFomodResolveRequest): Promise<NativeFomodResolveResult>;
 
   /** Removes a deployment and restores backups through `vortex-core`. */
   purge(request: NativePurgeRequest): Promise<NativePurgeResult>;

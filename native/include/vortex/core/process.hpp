@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ struct ProcessResult {
  */
 ProcessResult runProcess(const std::filesystem::path& executable,
                          const std::vector<std::string>& arguments,
-                         const std::atomic<bool>* cancel = nullptr);
+                         const std::atomic<bool>* cancel = nullptr,
+                         const std::map<std::string, std::string>& environment = {});
 
 } // namespace vortex::core

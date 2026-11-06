@@ -54,6 +54,7 @@ try {
       deploySingle: (request) => betterIpcRenderer.invoke("nativeDeploy:deploySingle", request),
       externalChanges: (request) =>
         betterIpcRenderer.invoke("nativeDeploy:externalChanges", request),
+      fomodResolve: (request) => betterIpcRenderer.invoke("nativeDeploy:fomodResolve", request),
       purge: (request) => betterIpcRenderer.invoke("nativeDeploy:purge", request),
       stagingStatus: (request) => betterIpcRenderer.invoke("nativeDeploy:stagingStatus", request),
       installApply: (request) => betterIpcRenderer.invoke("nativeDeploy:installApply", request),

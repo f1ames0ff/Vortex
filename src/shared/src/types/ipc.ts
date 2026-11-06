@@ -49,6 +49,8 @@ import type {
   NativeDeploySingleRequest,
   NativeExternalChangesRequest,
   NativeExternalChangesResult,
+  NativeFomodResolveRequest,
+  NativeFomodResolveResult,
   NativeDeployStatus,
   NativeHashFilesRequest,
   NativeHashFilesResult,
@@ -428,6 +430,9 @@ export interface InvokeChannels {
   "nativeDeploy:externalChanges": (
     request: NativeExternalChangesRequest,
   ) => Promise<NativeExternalChangesResult>;
+  "nativeDeploy:fomodResolve": (
+    request: NativeFomodResolveRequest,
+  ) => Promise<NativeFomodResolveResult>;
   "nativeDeploy:purge": (request: NativePurgeRequest) => Promise<NativePurgeResult>;
   "nativeDeploy:stagingStatus": (request: NativeStagingRequest) => Promise<NativeStagingResult>;
   "nativeDeploy:installApply": (request: NativeInstallRequest) => Promise<NativeInstallResult>;

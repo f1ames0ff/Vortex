@@ -189,6 +189,14 @@ export class NativeCoreClient {
     return this.#request("deployment.externalChanges", request);
   }
 
+  moduleLoad(modulePath: string): Promise<{ name: string }> {
+    return this.#request("module.load", { path: modulePath });
+  }
+
+  moduleCall(module: string, method: string, params: unknown): Promise<{ result: unknown }> {
+    return this.#request("module.call", { module, method, params });
+  }
+
   purge(request: NativePurgeRequest): Promise<NativePurgeResult> {
     return this.#request("purge", request);
   }

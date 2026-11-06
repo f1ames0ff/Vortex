@@ -2,6 +2,7 @@
 
 import path from "node:path";
 
+import { getErrorMessageOrDefault } from "@vortex/shared";
 import type {
   NativeArchiveExtractRequest,
   NativeArchiveListRequest,
@@ -12,6 +13,8 @@ import type {
   NativeDeployRequest,
   NativeDeploySingleRequest,
   NativeExternalChangesRequest,
+  NativeFomodResolveRequest,
+  NativeFomodResolveResult,
   NativeDownloadRequest,
   NativePluginOrderRequest,
   NativePluginOrderWriteRequest,
@@ -32,6 +35,30 @@ function nativeDeployEnabled(): boolean {
 }
 
 let client: NativeCoreClient | undefined;
+
+function nativeRootDir(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "native")
+    : path.resolve(app.getAppPath(), "..", "..", "native");
+}
+
+function nodeHelperPaths(): { module: string; script: string; fomod: string } {
+  const root = nativeRootDir();
+  const moduleName =
+    process.platform === "win32"
+      ? "vortex_node_helper_module.dll"
+      : "libvortex_node_helper_module.so";
+  const modulePath = app.isPackaged
+    ? path.join(root, moduleName)
+    : path.join(root, "build", "release", moduleName);
+  const scriptPath = app.isPackaged
+    ? path.join(root, "helpers", "vortex-helper.mjs")
+    : path.join(root, "helpers", "vortex-helper.mjs");
+  // Keep the app.asar path: Electron's asar fs shim resolves the package's
+  // node-gyp-build dependency and redirects the native .node load itself.
+  const fomod = require.resolve("@nexusmods/fomod-installer-native");
+  return { module: modulePath, script: scriptPath, fomod };
+}
 
 function resolveSevenZipPath(): string | undefined {
   try {
@@ -208,6 +235,44 @@ export function initNativeDeployIpc(): void {
   );
   betterIpcMain.handle("nativeDeploy:downloadCancel", (_event, id: string) =>
     nativeCoreClient().downloadCancel(id),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:externalChanges",
+    (_event, request: NativeExternalChangesRequest) => nativeCoreClient().externalChanges(request),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:fomodResolve",
+    async (_event, request: NativeFomodResolveRequest): Promise<NativeFomodResolveResult> => {
+      const paths = nodeHelperPaths();
+      const core = nativeCoreClient();
+      try {
+        await core.moduleLoad(paths.module);
+      } catch (err) {
+        if (!getErrorMessageOrDefault(err).includes("already loaded")) {
+          throw err;
+        }
+      }
+      const result = await core.moduleCall("node-helper", "call", {
+        node: process.execPath,
+        env: { ELECTRON_RUN_AS_NODE: "1" },
+        script: paths.script,
+        request: {
+          method: "fomod.resolve",
+          params: {
+            nativeLibrary: paths.fomod,
+            files: request.files,
+            stopPatterns: request.stopPatterns ?? [],
+            pluginPath: request.pluginPath ?? null,
+            scriptPath: request.scriptPath ?? "",
+            preset: request.preset,
+            validate: request.validate === true,
+          },
+        },
+      });
+      return result.result as NativeFomodResolveResult;
+    },
   );
 }
 

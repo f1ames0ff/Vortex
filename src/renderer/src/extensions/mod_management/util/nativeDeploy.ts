@@ -22,6 +22,8 @@ import type {
   NativeDeployRequest,
   NativeDeploySingleRequest,
   NativeDeployStatus,
+  NativeFomodResolveRequest,
+  NativeFomodResolveResult,
   NativeExternalChangesRequest,
   NativeDeployedFile,
   NativeDownloadInfo,
@@ -408,6 +410,24 @@ export async function cancelCollectionJobNatively(
     return undefined;
   }
   return window.api.nativeDeploy.collectionCancel(jobId);
+}
+
+/** Resolve a FOMOD preset through the node-helper C-ABI module. */
+export async function resolveFomodNatively(
+  request: NativeFomodResolveRequest,
+): Promise<NativeFomodResolveResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "module.abi")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.fomodResolve(request);
+  } catch (err) {
+    if (isUnknownMethod(err)) {
+      return undefined;
+    }
+    throw err;
+  }
 }
 
 /** List an archive in the core, returning `undefined` when unavailable. */
