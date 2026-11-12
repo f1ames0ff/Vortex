@@ -33,6 +33,9 @@ import type {
   NativeCollectionJobStatus,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeNxmQueueAddRequest,
+  NativeNxmQueueEntry,
+  NativeNxmQueueResult,
   NativeNxmResolveRequest,
   NativeNxmResolveResult,
   NativeCollectionMemberUpdate,
@@ -473,6 +476,19 @@ export interface InvokeChannels {
     request: NativeMetadataLookupRequest,
   ) => Promise<NativeMetadataLookupResult>;
   "nativeDeploy:nxmResolve": (request: NativeNxmResolveRequest) => Promise<NativeNxmResolveResult>;
+  "nativeDeploy:nxmQueueAdd": (request: NativeNxmQueueAddRequest) => Promise<NativeNxmQueueEntry>;
+  "nativeDeploy:nxmQueueList": () => Promise<NativeNxmQueueResult>;
+  "nativeDeploy:nxmQueueRemove": (input: string) => Promise<void>;
+  "nativeDeploy:nxmQueueClear": () => Promise<void>;
+  "nativeDeploy:nxmQueueUpdate": (
+    input: string,
+    awaitingLink: boolean,
+  ) => Promise<NativeNxmQueueEntry | null>;
+  "nativeDeploy:nxmQueueMatch": (
+    gameDomain: string,
+    modId: number,
+    fileId: number,
+  ) => Promise<NativeNxmQueueEntry | null>;
   "nativeDeploy:collectionTask": (
     request: NativeCollectionTaskRequest,
   ) => Promise<NativeCollectionJobStatus>;

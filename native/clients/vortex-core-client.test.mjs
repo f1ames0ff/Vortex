@@ -1395,3 +1395,129 @@ test("hands failed core tasks to the TypeScript fallback", async () => {
   });
   assert.equal(status.complete, true);
 });
+
+test("runs C# FOMOD through the external host contract with explicit consent", async () => {
+  const work = join(root, "fomod-csharp-host");
+  const source = join(work, "source");
+  const archive = join(work, "csharp.zip");
+  const extract = join(work, "extract");
+  const staging = join(work, "staging");
+  const helperScript = join(dirname(corePath), "..", "..", "helpers", "vortex-helper.mjs");
+  const hostScript = join(work, "fake-csharp-host.mjs");
+  mkdirSync(join(source, "fomod"), { recursive: true });
+  writeFileSync(join(source, "fomod", "script.cs"), "// scripted fixture");
+  writeFileSync(
+    hostScript,
+    `import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const index = process.argv.indexOf("--request");
+const request = JSON.parse(readFileSync(process.argv[index + 1], "utf8"));
+writeFileSync(join(request.scriptPath, "generated.txt"), "csharp-output");
+process.stdout.write(JSON.stringify({ result: { instructions: [
+  { type: "copy", source: "generated.txt", destination: "generated.txt" }
+] } }));`,
+  );
+  execFileSync(sevenZip, ["a", "-tzip", archive, "fomod"], { cwd: source, stdio: "ignore" });
+
+  const start = (allowCSharpScripts) =>
+    client.collectionStart({
+      collectionId: `fomod-csharp-${allowCSharpScripts}`,
+      gameId: "skyrimse",
+      concurrency: 1,
+      maxRetries: 0,
+      members: [
+        {
+          ruleIndex: 0,
+          ruleId: "requires_csharp",
+          type: "requires",
+          phase: 1,
+          ignored: false,
+          status: "pending",
+          task: {
+            modId: "CSharpMod",
+            extract: { archive, destination: extract, sevenZip },
+            install: { temp: extract, destination: staging, instructions: [] },
+            fomod: {
+              nativeLibrary: "unused",
+              node: process.execPath,
+              script: helperScript,
+              scriptPath: extract,
+              pluginPath: extract,
+              allowCSharpScripts,
+              csharpHost: process.execPath,
+              csharpHostArgs: [hostScript],
+            },
+          },
+        },
+      ],
+    });
+
+  const denied = await start(false);
+  const deniedWorker = await client.collectionExecute({
+    jobId: denied.jobId,
+    ruleId: "requires_csharp",
+  });
+  assert.equal(deniedWorker.members[0].status, "pending");
+  assert.equal(deniedWorker.members[0].fallback, true);
+  assert.match(deniedWorker.members[0].fallbackError, /explicit consent/);
+
+  const allowed = await start(true);
+  const allowedWorker = await client.collectionExecute({
+    jobId: allowed.jobId,
+    ruleId: "requires_csharp",
+  });
+  assert.equal(allowedWorker.members[0].status, "installed", allowedWorker.members[0].error);
+  assert.deepEqual(allowedWorker.members[0].result.files, ["generated.txt"]);
+  assert.equal(readFileSync(join(staging, "generated.txt"), "utf8"), "csharp-output");
+});
+
+test("owns the free-user NXM queue state", async () => {
+  await client.nxmQueueClear();
+  const first = await client.nxmQueueAdd({
+    input: "nxm://skyrimspecialedition/mods/100/files/500",
+    gameDomain: "skyrimspecialedition",
+    type: "mod",
+    modId: 100,
+    fileId: 500,
+  });
+  assert.equal(first.awaitingLink, false);
+  await client.nxmQueueAdd({
+    input: "nxm://skyrimspecialedition/mods/200/files/600",
+    gameDomain: "skyrimspecialedition",
+    type: "mod",
+    modId: 200,
+    fileId: 600,
+  });
+  // the same input is one queue row, not a duplicate
+  await client.nxmQueueAdd({
+    input: "nxm://skyrimspecialedition/mods/100/files/500",
+    gameDomain: "skyrimspecialedition",
+    type: "mod",
+    modId: 100,
+    fileId: 500,
+  });
+
+  let list = await client.nxmQueueList();
+  assert.deepEqual(
+    list.entries.map((entry) => entry.input),
+    [
+      "nxm://skyrimspecialedition/mods/100/files/500",
+      "nxm://skyrimspecialedition/mods/200/files/600",
+    ],
+  );
+  assert.equal(await client.nxmQueueMatch("skyrimspecialedition", 100, 500), null);
+
+  await client.nxmQueueUpdate("nxm://skyrimspecialedition/mods/100/files/500", true);
+  const match = await client.nxmQueueMatch("skyrimspecialedition", 100, 500);
+  assert.equal(match.input, "nxm://skyrimspecialedition/mods/100/files/500");
+  assert.equal(match.awaitingLink, true);
+
+  await client.nxmQueueRemove("nxm://skyrimspecialedition/mods/100/files/500");
+  list = await client.nxmQueueList();
+  assert.deepEqual(
+    list.entries.map((entry) => entry.input),
+    ["nxm://skyrimspecialedition/mods/200/files/600"],
+  );
+  await client.nxmQueueClear();
+  assert.deepEqual((await client.nxmQueueList()).entries, []);
+});

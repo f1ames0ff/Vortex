@@ -114,16 +114,39 @@ std::vector<std::string> listTree(const std::filesystem::path& root) {
 
 std::vector<InstallInstruction> resolveFomod(const CollectionFomodTask& fomod,
                                              const std::filesystem::path& extracted) {
+    const auto extractedFiles = listTree(extracted);
+    bool hasCSharp = false;
     json files = json::array();
-    for (const auto& file : listTree(extracted)) {
+    for (const auto& file : extractedFiles) {
         files.push_back(file);
+        auto lower = file;
+        std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        if (lower == "fomod/script.cs" || lower.ends_with("/fomod/script.cs")) {
+            hasCSharp = true;
+        }
+    }
+    if (hasCSharp) {
+        if (!fomod.allowCSharpScripts) {
+            throw std::runtime_error(
+                "C# FOMOD scripts require explicit consent; falling back to the UI installer");
+        }
+        if (fomod.csharpHost.empty()) {
+            throw std::runtime_error("C# FOMOD host is not configured");
+        }
     }
     json params = {
         {"nativeLibrary", fomod.nativeLibrary},
         {"files", std::move(files)},
         {"stopPatterns", json::array()},
         {"validate", false},
+        {"allowCSharpScripts", fomod.allowCSharpScripts},
     };
+    if (hasCSharp) {
+        params["csharpHost"] = fomod.csharpHost;
+        params["csharpHostArgs"] = fomod.csharpHostArgs;
+    }
     if (!fomod.pluginPath.empty()) {
         params["pluginPath"] = fomod.pluginPath;
     }
@@ -133,7 +156,8 @@ std::vector<InstallInstruction> resolveFomod(const CollectionFomodTask& fomod,
     if (!fomod.preset.empty()) {
         params["preset"] = json::parse(fomod.preset);
     }
-    const json request = {{"method", "fomod.resolve"}, {"params", params}};
+    const json request = {{"method", hasCSharp ? "fomod.csharp.resolve" : "fomod.resolve"},
+                          {"params", params}};
 
     const auto requestPath =
         std::filesystem::temp_directory_path() /
@@ -632,6 +656,7 @@ void CollectionJobs::handOffToFallback(const std::string& jobId, const std::stri
     // renderer keeps owning Redux/download registration.
     member->status = "pending";
     member->fallback = true;
+    member->fallbackError = member->error;
     member->task = CollectionTask{};
     member->error.clear();
     found->second.lastProgress = deployment::platform::now_ms();
@@ -769,6 +794,7 @@ json CollectionJobs::status(const CollectionJob& job) {
             {"attempts", member.attempts},
             {"executor", memberHasTask(member) ? "core" : "typescript"},
             {"fallback", member.fallback},
+            {"fallbackError", member.fallbackError},
             {"hasTask", memberHasTask(member)},
         };
         if (member.modId.has_value()) {

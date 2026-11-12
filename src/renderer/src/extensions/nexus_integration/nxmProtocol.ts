@@ -21,7 +21,15 @@ import { createKeyedCache } from "../../util/keyedCache";
 import { batchDispatch } from "../../util/util";
 import type { IResolvedURL } from "../download_management/types/ProtocolHandlers";
 import { SITE_ID } from "../gamemode_management/constants";
-import { resolveNxmNatively } from "../mod_management/util/nativeDeploy";
+import {
+  addNxmQueueEntry,
+  clearNxmQueue,
+  listNxmQueue,
+  matchNxmQueueEntry,
+  removeNxmQueueEntry,
+  resolveNxmNatively,
+  updateNxmQueueEntry,
+} from "../mod_management/util/nativeDeploy";
 import { addFreeUserDLItem, removeFreeUserDLItem } from "./actions/session";
 import { refreshMembership, scheduleMembershipRefresh } from "./membership";
 import NXMUrl from "./NXMUrl";
@@ -224,7 +232,7 @@ export class NxmProtocol {
       return;
     }
 
-    if (this.#deliverAwaitedLink(nxmUrl, url)) {
+    if (await this.#deliverAwaitedLink(nxmUrl, url)) {
       return;
     }
 
@@ -265,6 +273,7 @@ export class NxmProtocol {
       const { url, pageId } = queued;
 
       queued.awaitingLink = true;
+      void updateNxmQueueEntry(inputUrl, true);
 
       window.api.shell.openUrl(nexusFilePageUrl(pageId, url.modId, url.fileId));
     },
@@ -285,6 +294,7 @@ export class NxmProtocol {
       }
 
       this.#freeQueue.slice().forEach((queued) => queued.reject(new UserCanceled(false)));
+      void clearNxmQueue();
 
       // Rejecting the queued downloads dismisses the dialog but doesn't stop the install pipeline
       // (their UserCanceled doesn't survive IPC). pause-collection routes through the collections
@@ -307,14 +317,22 @@ export class NxmProtocol {
      * anything left parked here would have no way back.
      */
     onRetry: () => {
-      // only what the api will now serve: re-resolving anything else lands back here and parks a
-      // second entry for a download that is already parked
-      this.#freeQueue
-        .slice()
-        .filter((queued) => this.#canDownloadInApp(queued.url))
-        .forEach((queued) => {
-          this.resolve(queued.input).then(queued.resolve, queued.reject);
-        });
+      void (async () => {
+        const native = await listNxmQueue();
+        const inputs =
+          native !== undefined
+            ? native.entries.map((entry) => entry.input)
+            : this.#freeQueue.map((queued) => queued.input);
+        // only what the api will now serve: re-resolving anything else lands back here and parks a
+        // second entry for a download that is already parked
+        inputs
+          .map((input) => this.#queuedFor(input))
+          .filter((queued): queued is IQueuedDownload => queued !== undefined)
+          .filter((queued) => this.#canDownloadInApp(queued.url))
+          .forEach((queued) => {
+            this.resolve(queued.input).then(queued.resolve, queued.reject);
+          });
+      })();
     },
   };
 
@@ -377,6 +395,7 @@ export class NxmProtocol {
    * the settled download alive and re-resolving it if a matching link ever does arrive.
    */
   #dequeue(input: string): void {
+    void removeNxmQueueEntry(input);
     // the entry may already be gone
     const queuedIdx = this.#freeQueue.findIndex((iter) => iter.input === input);
     if (queuedIdx !== -1) {
@@ -393,7 +412,15 @@ export class NxmProtocol {
    * Park the download until the user brings back an authorised link from the website (or cancels
    * or skips it). FreeUserDLDialog renders off the redux queue this dispatches into.
    */
-  #websiteDownload(input: string, url: NXMUrl, pageId: GameDomain): Promise<IResolvedURL> {
+  async #websiteDownload(input: string, url: NXMUrl, pageId: GameDomain): Promise<IResolvedURL> {
+    await addNxmQueueEntry({
+      input,
+      gameDomain: pageId,
+      type: url.type,
+      modId: url.modId,
+      fileId: url.fileId,
+      collectionSlug: url.collectionSlug,
+    });
     // a promise settles once and #dequeue tolerates a repeat, so cancelling after a skip is safe
     return new Promise<IResolvedURL>((resolve, reject) => {
       this.#freeQueue.push({
@@ -645,19 +672,26 @@ export class NxmProtocol {
   }
 
   /** Hand an incoming link to the queued download that sent the user to fetch it. */
-  #deliverAwaitedLink(nxmUrl: NXMUrl, url: string): boolean {
-    const queued = this.#freeQueue.find(
-      (awaited) =>
-        awaited.awaitingLink &&
-        awaited.url.gameId === nxmUrl.gameId &&
-        awaited.url.modId === nxmUrl.modId &&
-        awaited.url.fileId === nxmUrl.fileId,
-    );
+  async #deliverAwaitedLink(nxmUrl: NXMUrl, url: string): Promise<boolean> {
+    const native = await matchNxmQueueEntry(nxmUrl.gameId, nxmUrl.modId, nxmUrl.fileId);
+    const queued =
+      native !== undefined
+        ? this.#queuedFor(native.input)
+        : this.#freeQueue.find(
+            (awaited) =>
+              awaited.awaitingLink &&
+              awaited.url.gameId === nxmUrl.gameId &&
+              awaited.url.modId === nxmUrl.modId &&
+              awaited.url.fileId === nxmUrl.fileId,
+          );
     if (queued === undefined) {
       return false;
     }
     // the link has arrived, so stop treating it as outstanding; resolving dequeues the download
     queued.awaitingLink = false;
+    if (native !== undefined) {
+      void updateNxmQueueEntry(native.input, false);
+    }
     this.resolve(url).then(queued.resolve, queued.reject);
     return true;
   }

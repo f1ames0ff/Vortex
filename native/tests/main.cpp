@@ -811,11 +811,11 @@ void testCollectionJobQueue() {
     job.gameId = "skyrimse";
     job.concurrency = 1;
     job.members = {
-        {0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
-        {1, "requires_b", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
-        {2, "requires_c", "requires", 2, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
-        {3, "recommends_d", "recommends", 666, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
-        {4, "requires_ignored", "requires", 1, true, "ignored", std::nullopt, std::nullopt, "", 0, {}, std::nullopt},
+        {0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, false, "", {}, std::nullopt},
+        {1, "requires_b", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, false, "", {}, std::nullopt},
+        {2, "requires_c", "requires", 2, false, "pending", std::nullopt, std::nullopt, "", 0, false, "", {}, std::nullopt},
+        {3, "recommends_d", "recommends", 666, false, "pending", std::nullopt, std::nullopt, "", 0, false, "", {}, std::nullopt},
+        {4, "requires_ignored", "requires", 1, true, "ignored", std::nullopt, std::nullopt, "", 0, false, "", {}, std::nullopt},
     };
 
     vortex::core::CollectionJobs jobs;
@@ -857,7 +857,7 @@ void testCollectionJobRetryAndStall() {
     job.concurrency = 1;
     job.maxRetries = 2;
     job.stallMs = 0;
-    job.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt}};
+    job.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, false, "", {}, std::nullopt}};
     vortex::core::CollectionJobs jobs;
     const auto id = jobs.start(job);
 
@@ -876,7 +876,7 @@ void testCollectionJobRetryAndStall() {
     // A fresh job with no progress is reported as stalled once the threshold passes.
     vortex::core::CollectionJob stalled;
     stalled.stallMs = 0;
-    stalled.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, {}, std::nullopt}};
+    stalled.members = {{0, "requires_a", "requires", 1, false, "pending", std::nullopt, std::nullopt, "", 0, false, "", {}, std::nullopt}};
     const auto stalledId = jobs.start(stalled);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     const auto stalledStatus = vortex::core::CollectionJobs::status(*jobs.find(stalledId));

@@ -35,6 +35,9 @@ import type {
   NativeLookupMod,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeNxmQueueAddRequest,
+  NativeNxmQueueEntry,
+  NativeNxmQueueResult,
   NativeNxmResolveRequest,
   NativeNxmResolveResult,
   NativeModReference,
@@ -524,6 +527,73 @@ export async function lookupModMetadataNatively(
     });
     return undefined;
   }
+}
+
+async function nxmQueueAvailable(): Promise<boolean> {
+  const status = await nativeDeployStatus();
+  return status.enabled && status.available && coreSupports(status, "nxm.queue");
+}
+
+export async function addNxmQueueEntry(
+  request: NativeNxmQueueAddRequest,
+): Promise<NativeNxmQueueEntry | undefined> {
+  if (!(await nxmQueueAvailable())) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.nxmQueueAdd(request).catch(() => undefined);
+}
+
+export async function listNxmQueue(): Promise<NativeNxmQueueResult | undefined> {
+  if (!(await nxmQueueAvailable())) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.nxmQueueList().catch(() => undefined);
+}
+
+export async function removeNxmQueueEntry(input: string): Promise<boolean> {
+  if (!(await nxmQueueAvailable())) {
+    return false;
+  }
+  return window.api.nativeDeploy
+    .nxmQueueRemove(input)
+    .then(() => true)
+    .catch(() => false);
+}
+
+export async function clearNxmQueue(): Promise<boolean> {
+  if (!(await nxmQueueAvailable())) {
+    return false;
+  }
+  return window.api.nativeDeploy
+    .nxmQueueClear()
+    .then(() => true)
+    .catch(() => false);
+}
+
+export async function updateNxmQueueEntry(
+  input: string,
+  awaitingLink: boolean,
+): Promise<NativeNxmQueueEntry | undefined> {
+  if (!(await nxmQueueAvailable())) {
+    return undefined;
+  }
+  return (
+    window.api.nativeDeploy.nxmQueueUpdate(input, awaitingLink).catch(() => undefined) ?? undefined
+  );
+}
+
+export async function matchNxmQueueEntry(
+  gameDomain: string,
+  modId: number,
+  fileId: number,
+): Promise<NativeNxmQueueEntry | undefined> {
+  if (!(await nxmQueueAvailable())) {
+    return undefined;
+  }
+  const entry = await window.api.nativeDeploy
+    .nxmQueueMatch(gameDomain, modId, fileId)
+    .catch(() => null);
+  return entry ?? undefined;
 }
 
 /** Resolve an nxm:// link through the core/helper Nexus API client. */

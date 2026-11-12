@@ -24,6 +24,9 @@ import type {
   NativeInstallRequest,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeNxmQueueAddRequest,
+  NativeNxmQueueEntry,
+  NativeNxmQueueResult,
   NativeNxmResolveRequest,
   NativeNxmResolveResult,
   NativePurgeRequest,
@@ -236,6 +239,8 @@ export function initNativeDeployIpc(): void {
                         member.task.fomod.pluginPath || member.task.extract?.destination || "",
                       scriptPath:
                         member.task.fomod.scriptPath || member.task.extract?.destination || "",
+                      csharpHost:
+                        member.task.fomod.csharpHost || process.env.VORTEX_FOMOD_CSHARP_HOST,
                     },
             },
           };
@@ -300,6 +305,39 @@ export function initNativeDeployIpc(): void {
   );
 
   betterIpcMain.handle(
+    "nativeDeploy:nxmQueueAdd",
+    (_event, request: NativeNxmQueueAddRequest): Promise<NativeNxmQueueEntry> =>
+      nativeCoreClient().nxmQueueAdd(request),
+  );
+  betterIpcMain.handle(
+    "nativeDeploy:nxmQueueList",
+    (): Promise<NativeNxmQueueResult> => nativeCoreClient().nxmQueueList(),
+  );
+  betterIpcMain.handle(
+    "nativeDeploy:nxmQueueRemove",
+    (_event, input: string): Promise<void> => nativeCoreClient().nxmQueueRemove(input),
+  );
+  betterIpcMain.handle(
+    "nativeDeploy:nxmQueueClear",
+    (): Promise<void> => nativeCoreClient().nxmQueueClear(),
+  );
+  betterIpcMain.handle(
+    "nativeDeploy:nxmQueueUpdate",
+    (_event, input: string, awaitingLink: boolean): Promise<NativeNxmQueueEntry | null> =>
+      nativeCoreClient().nxmQueueUpdate(input, awaitingLink),
+  );
+  betterIpcMain.handle(
+    "nativeDeploy:nxmQueueMatch",
+    (
+      _event,
+      gameDomain: string,
+      modId: number,
+      fileId: number,
+    ): Promise<NativeNxmQueueEntry | null> =>
+      nativeCoreClient().nxmQueueMatch(gameDomain, modId, fileId),
+  );
+
+  betterIpcMain.handle(
     "nativeDeploy:collectionTask",
     async (_event, request: NativeCollectionTaskRequest) => {
       const sevenZip = request.task.extract?.sevenZip ?? resolveSevenZipPath();
@@ -318,6 +356,13 @@ export function initNativeDeployIpc(): void {
               : {
                   ...request.task.extract,
                   sevenZip: request.task.extract.sevenZip ?? sevenZip,
+                },
+          fomod:
+            request.task.fomod === undefined
+              ? undefined
+              : {
+                  ...request.task.fomod,
+                  csharpHost: request.task.fomod.csharpHost || process.env.VORTEX_FOMOD_CSHARP_HOST,
                 },
         },
       });

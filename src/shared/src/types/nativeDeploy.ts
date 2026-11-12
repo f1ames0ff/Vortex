@@ -411,6 +411,8 @@ export interface NativeCollectionJobMember {
   executor?: "core" | "typescript";
   /** True when the core handed a failed task to the TypeScript fallback. */
   fallback?: boolean;
+  /** Reason the task was handed to the fallback. */
+  fallbackError?: string;
   /** True when the member carries a core execution task. */
   hasTask?: boolean;
   /** Set once a core-driven task completes successfully. */
@@ -423,6 +425,30 @@ export interface NativeCollectionMemberResult {
   downloadId?: string;
   archivePath?: string;
   files: string[];
+}
+
+export interface NativeNxmQueueEntry {
+  input: string;
+  gameDomain: string;
+  type: string;
+  modId: number;
+  fileId: number;
+  collectionSlug: string;
+  awaitingLink: boolean;
+  addedAt: number;
+}
+
+export interface NativeNxmQueueAddRequest {
+  input: string;
+  gameDomain: string;
+  type: string;
+  modId: number;
+  fileId: number;
+  collectionSlug?: string;
+}
+
+export interface NativeNxmQueueResult {
+  entries: NativeNxmQueueEntry[];
 }
 
 export interface NativeNxmResolveRequest {
@@ -621,6 +647,11 @@ export interface NativeCollectionTask {
     preset?: unknown;
     pluginPath?: string;
     scriptPath?: string;
+    /** Explicit user consent for archives containing fomod/script.cs. */
+    allowCSharpScripts?: boolean;
+    /** External .NET/IPC host implementing the --request JSON contract. */
+    csharpHost?: string;
+    csharpHostArgs?: string[];
   };
   modId?: string;
 }

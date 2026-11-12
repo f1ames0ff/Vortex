@@ -51,6 +51,7 @@ add_library(vortex_core
     src/hash.cpp
     src/install.cpp
     src/module_host.cpp
+    src/nxm_queue.cpp
     src/path_safety.cpp
     src/plugins.cpp
     src/status.cpp

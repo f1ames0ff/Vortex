@@ -12,6 +12,7 @@
 #include "vortex/core/hash.hpp"
 #include "vortex/core/install.hpp"
 #include "vortex/core/module_host.hpp"
+#include "vortex/core/nxm_queue.hpp"
 #include "vortex/core/plugins.hpp"
 #include "vortex/core/process.hpp"
 #include "vortex/core/status.hpp"
@@ -52,6 +53,7 @@ struct CoreState {
     // queue they reference is still alive.
     std::unique_ptr<vortex::core::DownloadQueue> downloads;
     vortex::core::CollectionJobs collectionJobs;
+    vortex::core::NxmQueue nxmQueue;
     vortex::core::ModuleHost modules;
 
     vortex::core::DownloadQueue& downloadQueue() {
@@ -868,6 +870,7 @@ json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
         {"attempts", member.attempts},
         {"executor", hasTask ? "core" : "typescript"},
         {"fallback", member.fallback},
+        {"fallbackError", member.fallbackError},
         {"hasTask", hasTask},
     };
     if (member.modId.has_value()) {
@@ -894,6 +897,17 @@ json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
         value["result"] = std::move(result);
     }
     return value;
+}
+
+json nxmQueueEntryJson(const vortex::core::NxmQueueEntry& entry) {
+    return {{"input", entry.input},
+            {"gameDomain", entry.gameDomain},
+            {"type", entry.type},
+            {"modId", entry.modId},
+            {"fileId", entry.fileId},
+            {"collectionSlug", entry.collectionSlug},
+            {"awaitingLink", entry.awaitingLink},
+            {"addedAt", entry.addedAt}};
 }
 
 vortex::core::CollectionTask readCollectionTask(const json& value) {
@@ -928,6 +942,9 @@ vortex::core::CollectionTask readCollectionTask(const json& value) {
         fomod.script = raw.value("script", std::string{});
         fomod.pluginPath = raw.value("pluginPath", std::string{});
         fomod.scriptPath = raw.value("scriptPath", std::string{});
+        fomod.allowCSharpScripts = raw.value("allowCSharpScripts", false);
+        fomod.csharpHost = raw.value("csharpHost", std::string{});
+        fomod.csharpHostArgs = stringArray(raw, "csharpHostArgs");
         if (raw.contains("preset")) {
             fomod.preset = raw["preset"].dump();
         }
@@ -1007,7 +1024,7 @@ json dispatch(CoreState& state, const Request& request) {
               "collection.status", "collection.next", "collection.member", "collection.pause",
               "collection.cancel", "collection.run", "collection.task",
               "collection.execute", "module.abi", "metadata.lookup", "download.resolve",
-              "download.queue", "plugins.scan",
+              "nxm.queue", "download.queue", "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
               "deploy.symlink", "deploy.move", "deploy.single",
               "deployment.externalChanges", "purge"}},
@@ -1021,6 +1038,46 @@ json dispatch(CoreState& state, const Request& request) {
 
     if (request.method == "download.resolve") {
         return downloadResolve(params);
+    }
+
+    if (request.method == "nxm.queue.add") {
+        vortex::core::NxmQueueEntry entry;
+        entry.input = params.value("input", std::string{});
+        entry.gameDomain = params.value("gameDomain", std::string{});
+        entry.type = params.value("type", std::string("mod"));
+        entry.modId = params.value("modId", 0);
+        entry.fileId = params.value("fileId", 0);
+        entry.collectionSlug = params.value("collectionSlug", std::string{});
+        if (entry.input.empty() || entry.gameDomain.empty()) {
+            throw std::runtime_error("nxm.queue.add requires input and gameDomain");
+        }
+        return nxmQueueEntryJson(state.nxmQueue.add(std::move(entry)));
+    }
+    if (request.method == "nxm.queue.list") {
+        json entries = json::array();
+        for (const auto& entry : state.nxmQueue.list()) {
+            entries.push_back(nxmQueueEntryJson(entry));
+        }
+        return {{"entries", std::move(entries)}};
+    }
+    if (request.method == "nxm.queue.remove") {
+        state.nxmQueue.remove(params.value("input", std::string{}));
+        return {{"removed", true}};
+    }
+    if (request.method == "nxm.queue.clear") {
+        state.nxmQueue.clear();
+        return {{"cleared", true}};
+    }
+    if (request.method == "nxm.queue.update") {
+        const auto entry = state.nxmQueue.updateAwaiting(
+            params.value("input", std::string{}), params.value("awaitingLink", false));
+        return entry.has_value() ? nxmQueueEntryJson(*entry) : json(nullptr);
+    }
+    if (request.method == "nxm.queue.match") {
+        const auto entry = state.nxmQueue.matchAwaited(
+            params.value("gameDomain", std::string{}), params.value("modId", 0),
+            params.value("fileId", 0));
+        return entry.has_value() ? nxmQueueEntryJson(*entry) : json(nullptr);
     }
 
     if (request.method == "game.registry") {

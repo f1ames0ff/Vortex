@@ -43,6 +43,9 @@ import type {
   NativeInstallResult,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeNxmQueueAddRequest,
+  NativeNxmQueueEntry,
+  NativeNxmQueueResult,
   NativeNxmResolveRequest,
   NativeNxmResolveResult,
   NativePluginOrderRequest,
@@ -279,6 +282,34 @@ export class NativeCoreClient {
 
   downloadResolve(request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult> {
     return this.#request("download.resolve", request);
+  }
+
+  nxmQueueAdd(request: NativeNxmQueueAddRequest): Promise<NativeNxmQueueEntry> {
+    return this.#request("nxm.queue.add", request);
+  }
+
+  nxmQueueList(): Promise<NativeNxmQueueResult> {
+    return this.#request("nxm.queue.list", {});
+  }
+
+  nxmQueueRemove(input: string): Promise<void> {
+    return this.#request("nxm.queue.remove", { input });
+  }
+
+  nxmQueueClear(): Promise<void> {
+    return this.#request("nxm.queue.clear", {});
+  }
+
+  nxmQueueUpdate(input: string, awaitingLink: boolean): Promise<NativeNxmQueueEntry | null> {
+    return this.#request("nxm.queue.update", { input, awaitingLink });
+  }
+
+  nxmQueueMatch(
+    gameDomain: string,
+    modId: number,
+    fileId: number,
+  ): Promise<NativeNxmQueueEntry | null> {
+    return this.#request("nxm.queue.match", { gameDomain, modId, fileId });
   }
 
   collectionTask(request: NativeCollectionTaskRequest): Promise<NativeCollectionJobStatus> {

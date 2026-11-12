@@ -1,6 +1,9 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const requestIndex = process.argv.indexOf("--request");
 if (requestIndex < 0 || process.argv[requestIndex + 1] === undefined) {
@@ -185,6 +188,71 @@ async function nxmResolve(params) {
   };
 }
 
+/**
+ * C# FOMOD host contract:
+ *   host [csharpHostArgs...] --request <json-file>
+ * Request: { files, pluginPath, scriptPath, preset, allowCSharpScripts }
+ * Response: { result: { instructions: [...] } } or { error: "..." }
+ * The host is the external Windows/.NET IPC boundary; the core itself never
+ * executes C#. Consent is enforced by the core before this helper is called.
+ */
+async function fomodCSharpResolve(params) {
+  if (params.csharpHost === undefined || params.csharpHost === "") {
+    throw new Error("C# FOMOD host is not configured");
+  }
+  const requestPath = join(
+    tmpdir(),
+    `vortex-fomod-csharp-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+  );
+  writeFileSync(
+    requestPath,
+    JSON.stringify({
+      files: params.files ?? [],
+      pluginPath: params.pluginPath ?? null,
+      scriptPath: params.scriptPath ?? "",
+      preset: params.preset,
+      allowCSharpScripts: params.allowCSharpScripts === true,
+    }),
+    { mode: 0o600 },
+  );
+
+  const child = spawn(
+    params.csharpHost,
+    [...(params.csharpHostArgs ?? []), "--request", requestPath],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => (stdout += chunk));
+  child.stderr.on("data", (chunk) => (stderr += chunk));
+  const exitCode = await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  }).finally(() => {
+    try {
+      unlinkSync(requestPath);
+    } catch {
+      // best effort
+    }
+  });
+  if (exitCode !== 0) {
+    throw new Error(stderr || stdout || "C# FOMOD host failed");
+  }
+  const start = stdout.indexOf("{");
+  if (start < 0) {
+    throw new Error("C# FOMOD host produced no JSON");
+  }
+  const response = JSON.parse(stdout.slice(start));
+  if (response.error !== undefined) {
+    throw new Error(response.error);
+  }
+  return response.result ?? {};
+}
+
 async function metadataLookup(params) {
   let endpoint = params.endpoint;
   if (endpoint === undefined && params.md5 !== undefined) {
@@ -213,6 +281,8 @@ async function run() {
       return fomodTestSupported(request.params ?? {});
     case "fomod.resolve":
       return fomodResolve(request.params ?? {});
+    case "fomod.csharp.resolve":
+      return fomodCSharpResolve(request.params ?? {});
     case "metadata.lookup":
       return metadataLookup(request.params ?? {});
     case "nxm.resolve":

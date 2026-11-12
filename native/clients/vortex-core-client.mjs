@@ -149,6 +149,30 @@ export class VortexCoreClient {
     return this.request("download.resolve", request);
   }
 
+  nxmQueueAdd(request) {
+    return this.request("nxm.queue.add", request);
+  }
+
+  nxmQueueList() {
+    return this.request("nxm.queue.list", {});
+  }
+
+  nxmQueueRemove(input) {
+    return this.request("nxm.queue.remove", { input });
+  }
+
+  nxmQueueClear() {
+    return this.request("nxm.queue.clear", {});
+  }
+
+  nxmQueueUpdate(input, awaitingLink) {
+    return this.request("nxm.queue.update", { input, awaitingLink });
+  }
+
+  nxmQueueMatch(gameDomain, modId, fileId) {
+    return this.request("nxm.queue.match", { gameDomain, modId, fileId });
+  }
+
   collectionRun(jobId, taskOnly = true) {
     return this.request("collection.run", { jobId, taskOnly });
   }

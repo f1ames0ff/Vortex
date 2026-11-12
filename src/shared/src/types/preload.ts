@@ -42,6 +42,9 @@ import type {
   NativeCollectionJobStatus,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeNxmQueueAddRequest,
+  NativeNxmQueueEntry,
+  NativeNxmQueueResult,
   NativeNxmResolveRequest,
   NativeNxmResolveResult,
   NativeCollectionMemberUpdate,
@@ -712,6 +715,16 @@ export interface NativeDeployApi {
   collectionRun(jobId: string, taskOnly?: boolean): Promise<NativeCollectionJobStatus>;
   metadataLookup(request: NativeMetadataLookupRequest): Promise<NativeMetadataLookupResult>;
   nxmResolve(request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult>;
+  nxmQueueAdd(request: NativeNxmQueueAddRequest): Promise<NativeNxmQueueEntry>;
+  nxmQueueList(): Promise<NativeNxmQueueResult>;
+  nxmQueueRemove(input: string): Promise<void>;
+  nxmQueueClear(): Promise<void>;
+  nxmQueueUpdate(input: string, awaitingLink: boolean): Promise<NativeNxmQueueEntry | null>;
+  nxmQueueMatch(
+    gameDomain: string,
+    modId: number,
+    fileId: number,
+  ): Promise<NativeNxmQueueEntry | null>;
 
   /** Attaches an execution task to one collection member. */
   collectionTask(request: NativeCollectionTaskRequest): Promise<NativeCollectionJobStatus>;

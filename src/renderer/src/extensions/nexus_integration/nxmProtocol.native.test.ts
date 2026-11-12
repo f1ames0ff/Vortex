@@ -1,9 +1,15 @@
 import { expect, vi } from "vitest";
 
 import type { INxmFixtures } from "@/test-utils/nxmTest";
-import { COLLECTION_URL, MOD_URL, test } from "@/test-utils/nxmTest";
+import { COLLECTION_URL, FREE, MOD_URL, test } from "@/test-utils/nxmTest";
 
-import { resolveNxmNatively } from "../mod_management/util/nativeDeploy";
+import {
+  addNxmQueueEntry,
+  clearNxmQueue,
+  removeNxmQueueEntry,
+  resolveNxmNatively,
+  updateNxmQueueEntry,
+} from "../mod_management/util/nativeDeploy";
 import { getAccessToken } from "./util/oauthSession";
 
 vi.mock("./util/oauthSession", () => ({
@@ -12,10 +18,25 @@ vi.mock("./util/oauthSession", () => ({
 
 vi.mock("../mod_management/util/nativeDeploy", () => ({
   resolveNxmNatively: vi.fn(),
+  addNxmQueueEntry: vi.fn(),
+  clearNxmQueue: vi.fn(),
+  listNxmQueue: vi.fn(),
+  matchNxmQueueEntry: vi.fn(),
+  removeNxmQueueEntry: vi.fn(),
+  updateNxmQueueEntry: vi.fn(),
+}));
+
+vi.mock("./util", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./util")>()),
+  getInfoGraphQL: vi.fn().mockResolvedValue({ modInfo: { direct_download_enabled: false } }),
 }));
 
 const nativeResolve = vi.mocked(resolveNxmNatively);
 const accessToken = vi.mocked(getAccessToken);
+const queueAdd = vi.mocked(addNxmQueueEntry);
+const queueClear = vi.mocked(clearNxmQueue);
+const queueRemove = vi.mocked(removeNxmQueueEntry);
+const queueUpdate = vi.mocked(updateNxmQueueEntry);
 
 const downloadLink = (uri: string) => [{ URI: uri, short_name: "cdn", name: "CDN" }];
 
@@ -23,6 +44,10 @@ test.describe("NxmProtocol native resolution", () => {
   test.beforeEach(() => {
     accessToken.mockReset();
     nativeResolve.mockReset();
+    queueAdd.mockReset();
+    queueClear.mockReset();
+    queueRemove.mockReset();
+    queueUpdate.mockReset();
   });
 
   test("uses the core helper for authenticated mod links", async ({ makeNxm }: INxmFixtures) => {
@@ -109,6 +134,39 @@ test.describe("NxmProtocol native resolution", () => {
     );
     expect(result.urls).toEqual(["https://cdn.example.com/api-key.zip"]);
     expect(harness.getDownloadURLs).not.toHaveBeenCalled();
+  });
+
+  test("mirrors the free-user dialog queue into the core", async ({ makeNxm }) => {
+    accessToken.mockResolvedValue(undefined);
+    queueAdd.mockResolvedValue({
+      input: MOD_URL,
+      gameDomain: "skyrimspecialedition",
+      type: "mod",
+      modId: 100,
+      fileId: 500,
+      collectionSlug: "",
+      awaitingLink: false,
+      addedAt: 1,
+    });
+    queueUpdate.mockResolvedValue(undefined);
+    queueClear.mockResolvedValue(true);
+    queueRemove.mockResolvedValue(true);
+    const { nxm, resolve } = makeNxm({ userInfo: FREE });
+
+    const pending = resolve(MOD_URL);
+    await vi.waitFor(() => expect(queueAdd).toHaveBeenCalled());
+
+    expect(queueAdd).toHaveBeenCalledWith({
+      input: MOD_URL,
+      gameDomain: "skyrimspecialedition",
+      type: "mod",
+      modId: 100,
+      fileId: 500,
+      collectionSlug: undefined,
+    });
+    expect(nxm.dialogHandlers.onCancel(MOD_URL)).toBe(true);
+    expect(queueClear).toHaveBeenCalled();
+    await expect(pending).rejects.toBeTruthy();
   });
 
   test("falls back to nexus-api when the core helper is unavailable", async ({

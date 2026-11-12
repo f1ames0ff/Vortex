@@ -31,6 +31,9 @@ struct CollectionFomodTask {
     std::string preset;
     std::string pluginPath;
     std::string scriptPath;
+    bool allowCSharpScripts = false;
+    std::string csharpHost;
+    std::vector<std::string> csharpHostArgs;
 };
 
 struct CollectionTask {
@@ -62,6 +65,7 @@ struct CollectionMemberState {
     std::string error;
     int attempts = 0;
     bool fallback = false;
+    std::string fallbackError;
     CollectionTask task;
     std::optional<CollectionMemberResult> result;
 };
