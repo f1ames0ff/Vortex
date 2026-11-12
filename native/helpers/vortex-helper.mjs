@@ -128,6 +128,41 @@ async function fomodResolve(params) {
   };
 }
 
+async function oauthRefresh(params) {
+  if (
+    params.tokenUrl === undefined ||
+    params.clientId === undefined ||
+    params.refreshToken === undefined
+  ) {
+    throw new Error("oauth.refresh requires tokenUrl, clientId and refreshToken");
+  }
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    client_id: params.clientId,
+    refresh_token: params.refreshToken,
+  }).toString();
+  const response = await fetch(params.tokenUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body,
+  });
+  const text = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    throw new Error(`OAuth token endpoint returned invalid JSON (${response.status})`);
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      code: payload.error ?? `http_${response.status}`,
+      message: payload.error_description ?? payload.error ?? "OAuth refresh failed",
+    };
+  }
+  return { ok: true, token: payload };
+}
+
 async function nxmResolve(params) {
   if (params.type !== "mod" && params.type !== "collection") {
     throw new Error(`nxm.resolve does not support type: ${params.type}`);
@@ -287,6 +322,8 @@ async function run() {
       return metadataLookup(request.params ?? {});
     case "nxm.resolve":
       return nxmResolve(request.params ?? {});
+    case "oauth.refresh":
+      return oauthRefresh(request.params ?? {});
     default:
       throw new Error(`unknown helper method: ${request.method}`);
   }

@@ -24,6 +24,8 @@ import type {
   NativeInstallRequest,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeOAuthRefreshRequest,
+  NativeOAuthRefreshResult,
   NativeNxmQueueAddRequest,
   NativeNxmQueueEntry,
   NativeNxmQueueResult,
@@ -304,6 +306,19 @@ export function initNativeDeployIpc(): void {
         appVersion: app.getVersion(),
         nexusApiModule: resolveNexusApiModule(),
         apiUrls: nexusApiUrls(),
+      });
+    },
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:oauthRefresh",
+    (_event, request: NativeOAuthRefreshRequest): Promise<NativeOAuthRefreshResult> => {
+      const paths = nodeHelperPaths();
+      return nativeCoreClient().oauthRefresh({
+        ...request,
+        node: process.env.VORTEX_NODE_PATH ?? process.execPath,
+        script: paths.script,
+        env: process.env.VORTEX_NODE_PATH === undefined ? { ELECTRON_RUN_AS_NODE: "1" } : undefined,
       });
     },
   );

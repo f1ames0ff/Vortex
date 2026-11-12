@@ -442,6 +442,28 @@ export interface NativeCollectionRegistrationResult {
   members: NativeCollectionRegistrationMember[];
 }
 
+export interface NativeOAuthRefreshRequest {
+  tokenUrl: string;
+  clientId: string;
+  refreshToken: string;
+  /** Injected by main. */
+  node?: string;
+  script?: string;
+  env?: Record<string, string>;
+}
+
+export interface NativeOAuthToken {
+  access_token: string;
+  refresh_token: string;
+  expires_in: number;
+  token_type?: string;
+  scope?: string;
+}
+
+export type NativeOAuthRefreshResult =
+  | { ok: true; token: NativeOAuthToken }
+  | { ok: false; code: string; message: string };
+
 export interface NativeNxmQueueEntry {
   input: string;
   gameDomain: string;

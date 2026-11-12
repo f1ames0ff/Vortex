@@ -506,6 +506,16 @@ json runNodeHelper(const json& params, const std::string& method, const json& he
     return response.value("result", json::object());
 }
 
+json oauthRefresh(const json& params) {
+    json helperParams = json::object();
+    for (const auto* key : {"tokenUrl", "clientId", "refreshToken"}) {
+        if (params.contains(key)) {
+            helperParams[key] = params[key];
+        }
+    }
+    return runNodeHelper(params, "oauth.refresh", helperParams);
+}
+
 json downloadResolve(const json& params) {
     json helperParams = json::object();
     for (const auto* key : {"type", "gameDomain", "modId", "fileId", "key", "expires",
@@ -1048,8 +1058,8 @@ json dispatch(CoreState& state, const Request& request) {
               "collection.status", "collection.next", "collection.member", "collection.pause",
               "collection.cancel", "collection.run", "collection.task",
               "collection.execute", "collection.registration", "module.abi",
-              "metadata.lookup", "download.resolve", "nxm.queue", "download.queue",
-              "plugins.scan",
+              "metadata.lookup", "download.resolve", "oauth.refresh", "nxm.queue",
+              "download.queue", "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
               "deploy.symlink", "deploy.move", "deploy.single",
               "deployment.externalChanges", "purge"}},
@@ -1063,6 +1073,10 @@ json dispatch(CoreState& state, const Request& request) {
 
     if (request.method == "download.resolve") {
         return downloadResolve(params);
+    }
+
+    if (request.method == "oauth.refresh") {
+        return oauthRefresh(params);
     }
 
     if (request.method == "nxm.queue.add") {

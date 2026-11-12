@@ -43,6 +43,8 @@ import type {
   NativeCollectionRegistrationResult,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeOAuthRefreshRequest,
+  NativeOAuthRefreshResult,
   NativeNxmQueueAddRequest,
   NativeNxmQueueEntry,
   NativeNxmQueueResult,
@@ -717,6 +719,7 @@ export interface NativeDeployApi {
   collectionRegistration(jobId: string): Promise<NativeCollectionRegistrationResult>;
   metadataLookup(request: NativeMetadataLookupRequest): Promise<NativeMetadataLookupResult>;
   nxmResolve(request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult>;
+  oauthRefresh(request: NativeOAuthRefreshRequest): Promise<NativeOAuthRefreshResult>;
   nxmQueueAdd(request: NativeNxmQueueAddRequest): Promise<NativeNxmQueueEntry>;
   nxmQueueList(): Promise<NativeNxmQueueResult>;
   nxmQueueRemove(input: string): Promise<void>;

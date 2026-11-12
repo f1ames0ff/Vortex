@@ -34,6 +34,8 @@ import type {
   NativeCollectionRegistrationResult,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeOAuthRefreshRequest,
+  NativeOAuthRefreshResult,
   NativeNxmQueueAddRequest,
   NativeNxmQueueEntry,
   NativeNxmQueueResult,
@@ -480,6 +482,9 @@ export interface InvokeChannels {
     request: NativeMetadataLookupRequest,
   ) => Promise<NativeMetadataLookupResult>;
   "nativeDeploy:nxmResolve": (request: NativeNxmResolveRequest) => Promise<NativeNxmResolveResult>;
+  "nativeDeploy:oauthRefresh": (
+    request: NativeOAuthRefreshRequest,
+  ) => Promise<NativeOAuthRefreshResult>;
   "nativeDeploy:nxmQueueAdd": (request: NativeNxmQueueAddRequest) => Promise<NativeNxmQueueEntry>;
   "nativeDeploy:nxmQueueList": () => Promise<NativeNxmQueueResult>;
   "nativeDeploy:nxmQueueRemove": (input: string) => Promise<void>;

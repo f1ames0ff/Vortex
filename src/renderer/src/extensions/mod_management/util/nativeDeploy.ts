@@ -36,6 +36,8 @@ import type {
   NativeLookupMod,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeOAuthRefreshRequest,
+  NativeOAuthRefreshResult,
   NativeNxmQueueAddRequest,
   NativeNxmQueueEntry,
   NativeNxmQueueResult,
@@ -605,6 +607,23 @@ export async function matchNxmQueueEntry(
     .nxmQueueMatch(gameDomain, modId, fileId)
     .catch(() => null);
   return entry ?? undefined;
+}
+
+export async function refreshOAuthNatively(
+  request: NativeOAuthRefreshRequest,
+): Promise<NativeOAuthRefreshResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "oauth.refresh")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.oauthRefresh(request);
+  } catch (err) {
+    log("debug", "native OAuth refresh failed", {
+      error: getErrorMessageOrDefault(err),
+    });
+    return undefined;
+  }
 }
 
 /** Resolve an nxm:// link through the core/helper Nexus API client. */

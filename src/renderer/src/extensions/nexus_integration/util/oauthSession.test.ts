@@ -5,6 +5,7 @@ import { makeUserInfo } from "@/test-utils/builders";
 import type { IHarnessFixtures } from "@/test-utils/harnessTest";
 import { test } from "@/test-utils/harnessTest";
 
+import { refreshOAuthNatively } from "../../mod_management/util/nativeDeploy";
 import { clearOAuthCredentials, setOAuthCredentials } from "../actions/account";
 import type * as oauthModule from "./oauth";
 import { requestTokenRefresh } from "./oauth";
@@ -16,7 +17,12 @@ vi.mock("./oauth", async (importOriginal) => ({
   requestTokenRefresh: vi.fn(),
 }));
 
+vi.mock("../../mod_management/util/nativeDeploy", () => ({
+  refreshOAuthNatively: vi.fn(),
+}));
+
 const refreshMock = vi.mocked(requestTokenRefresh);
+const nativeRefreshMock = vi.mocked(refreshOAuthNatively);
 
 /**
  * An access token as the site issues it, expiring `secondsLeft` from now. Nothing verifies the
@@ -99,6 +105,42 @@ describe("getAccessToken", () => {
       refreshToken: "refresh-2",
       fingerprint: "fp-renewed",
     });
+  });
+
+  test("uses the core helper for an OAuth refresh", async ({ makeApi }) => {
+    const harness = makeApi();
+    logIn(harness, makeToken(10));
+    const renewed = makeToken(3600, "native");
+    nativeRefreshMock.mockResolvedValueOnce({ ok: true, token: reply(renewed) });
+
+    await expect(getAccessToken(harness.api)).resolves.toBe(renewed);
+
+    expect(nativeRefreshMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clientId: "vortex_loopback",
+        refreshToken: "refresh-1",
+      }),
+    );
+    expect(refreshMock).not.toHaveBeenCalled();
+    expect(storedCredentials(harness)?.refreshToken).toBe("refresh-2");
+  });
+
+  test("signs out when the core helper reports invalid_grant", async ({ makeApi }) => {
+    const harness = makeApi({ userInfo: makeUserInfo({ name: "Ada" }) });
+    const token = makeToken(3600);
+    logIn(harness, token);
+    nativeRefreshMock.mockResolvedValueOnce({
+      ok: false,
+      code: "invalid_grant",
+      message: "expired",
+    });
+
+    await expect(getAccessToken(harness.api, token)).rejects.toMatchObject({
+      code: "invalid_grant",
+    });
+
+    expect(refreshMock).not.toHaveBeenCalled();
+    expect(storedCredentials(harness)).toBeUndefined();
   });
 
   test("shares one refresh between callers who need it at the same time", async ({ makeApi }) => {

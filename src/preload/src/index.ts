@@ -82,6 +82,7 @@ try {
         betterIpcRenderer.invoke("nativeDeploy:collectionRegistration", jobId),
       metadataLookup: (request) => betterIpcRenderer.invoke("nativeDeploy:metadataLookup", request),
       nxmResolve: (request) => betterIpcRenderer.invoke("nativeDeploy:nxmResolve", request),
+      oauthRefresh: (request) => betterIpcRenderer.invoke("nativeDeploy:oauthRefresh", request),
       nxmQueueAdd: (request) => betterIpcRenderer.invoke("nativeDeploy:nxmQueueAdd", request),
       nxmQueueList: () => betterIpcRenderer.invoke("nativeDeploy:nxmQueueList"),
       nxmQueueRemove: (input) => betterIpcRenderer.invoke("nativeDeploy:nxmQueueRemove", input),

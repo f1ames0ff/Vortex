@@ -4,8 +4,10 @@ import jwt from "jsonwebtoken";
 import { log } from "@/logging";
 import type { IExtensionApi } from "@/types/IExtensionContext";
 
+import { refreshOAuthNatively } from "../../mod_management/util/nativeDeploy";
 import { clearOAuthCredentials, setOAuthCredentials } from "../actions/account";
 import { setUserInfo } from "../actions/persistent";
+import { OAUTH_CLIENT_ID, OAUTH_URL } from "../constants";
 import { accessTokenSchema } from "../types/IJWTAccessToken";
 import { requestTokenRefresh } from "./oauth";
 
@@ -62,8 +64,24 @@ async function doRefresh(
   current: IOAuthCredentials,
 ): Promise<string | undefined> {
   let reply;
+  const native = await refreshOAuthNatively({
+    tokenUrl: `${OAUTH_URL}/token`,
+    clientId: OAUTH_CLIENT_ID,
+    refreshToken: current.refreshToken,
+  });
+  if (native !== undefined && native.ok === false) {
+    const err = new Error(native.message);
+    err["code"] = native.code;
+    if (REFUSED_OAUTH_CODES.includes(native.code)) {
+      refuseLogin(api, err);
+    }
+    throw err;
+  }
   try {
-    reply = await requestTokenRefresh(current.refreshToken);
+    reply =
+      native !== undefined && native.ok
+        ? native.token
+        : await requestTokenRefresh(current.refreshToken);
   } catch (err) {
     if (REFUSED_OAUTH_CODES.includes(getErrorCode(err) ?? "")) {
       refuseLogin(api, err);

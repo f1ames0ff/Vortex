@@ -44,6 +44,8 @@ import type {
   NativeInstallResult,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
+  NativeOAuthRefreshRequest,
+  NativeOAuthRefreshResult,
   NativeNxmQueueAddRequest,
   NativeNxmQueueEntry,
   NativeNxmQueueResult,
@@ -287,6 +289,10 @@ export class NativeCoreClient {
 
   downloadResolve(request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult> {
     return this.#request("download.resolve", request);
+  }
+
+  oauthRefresh(request: NativeOAuthRefreshRequest): Promise<NativeOAuthRefreshResult> {
+    return this.#request("oauth.refresh", request);
   }
 
   nxmQueueAdd(request: NativeNxmQueueAddRequest): Promise<NativeNxmQueueEntry> {
