@@ -1,0 +1,79 @@
+name: FOMOD C# Host (Windows)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/fomod-host-windows.yml
+      - native/fomod-host/**
+      - native/helpers/vortex-helper.mjs
+      - native/src/collection.cpp
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-run:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: "recursive"
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Install pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Resolve FOMOD installer assemblies
+        shell: pwsh
+        run: |
+          $dir = pnpm -s -F @vortex/main exec node -p "require('path').dirname(require.resolve('@nexusmods/fomod-installer-ipc/package.json')) + '/dist'"
+          if (-not (Test-Path "$dir/FomodInstaller.Interface.dll")) {
+            throw "FOMOD installer assemblies not found at $dir"
+          }
+          "FOMOD_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Validate dynamic delegate contract
+        shell: pwsh
+        run: dotnet run --project native/fomod-host/tests/FomodDynamicTest.csproj -p:FomodInstallerDir="$env:FOMOD_DIR"
+
+      - name: Build host
+        shell: pwsh
+        run: dotnet build native/fomod-host/VortexFomodHost.csproj -c Release -p:FomodInstallerDir="$env:FOMOD_DIR"
+
+      - name: Run scripted C# FOMOD
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "vortex-fomod-host"
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          Copy-Item native/fomod-host/fixtures/fomod -Destination $root -Recurse -Force
+
+          $request = @{
+            files = @("fomod/script.cs", "fomod/info.xml")
+            pluginPath = ""
+            scriptPath = $root
+            allowCSharpScripts = $true
+          } | ConvertTo-Json -Depth 8
+          $requestPath = Join-Path $root "request.json"
+          Set-Content -Path $requestPath -Value $request -Encoding UTF8
+
+          $hostExe = Join-Path $PWD "native/fomod-host/bin/Release/net9.0-windows/VortexFomodHost.exe"
+          & $hostExe --request $requestPath
+          if ($LASTEXITCODE -ne 0) { throw "host exited with $LASTEXITCODE" }
+
+          $generated = Join-Path $root "dummy.esp"
+          if (-not (Test-Path $generated)) { throw "C# script did not generate dummy.esp" }
+          $bytes = [System.IO.File]::ReadAllBytes($generated)
+          if ($bytes.Length -ne 3 -or $bytes[0] -ne 0x61 -or $bytes[2] -ne 0x63) {
+            throw "generated file content mismatch"
+          }

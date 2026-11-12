@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<fomod>
+  <Name>C# Host Fixture</Name>
+  <Author>Vortex</Author>
+  <Version>1.0</Version>
+  <Description>Scripted C# FOMOD host test</Description>
+</fomod>

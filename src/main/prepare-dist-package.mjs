@@ -100,6 +100,19 @@ async function prepareNativeCore() {
   await copyFile(helperSource, stagedHelper);
   console.log(`staged native helper: ${stagedHelper}`);
 
+  if (process.platform === "win32") {
+    const hostSource = resolve(nativeRoot, "fomod-host", "bin", "Release", "net9.0-windows");
+    if (!existsSync(resolve(hostSource, "VortexFomodHost.exe"))) {
+      throw new Error(
+        `missing C# FOMOD host: ${hostSource}\n` +
+          "Build it with the Windows FOMOD host workflow before packaging.",
+      );
+    }
+    const stagedHost = resolve(MAIN_DIR, "temp", "native", "fomod-host");
+    await cp(hostSource, stagedHost, { recursive: true });
+    console.log(`staged C# FOMOD host: ${stagedHost}`);
+  }
+
   // A packaged app runs the helper through the app's Node/Electron runtime, so
   // the FOMOD addon and node-gyp-build must be outside app.asar.
   const require = createRequire(import.meta.url);

@@ -82,6 +82,18 @@ function nodeHelperPaths(): { module: string; script: string; fomod: string } {
   return { module: modulePath, script: scriptPath, fomod };
 }
 
+function fomodCSharpHostPath(): string | undefined {
+  const configured = process.env.VORTEX_FOMOD_CSHARP_HOST;
+  if (configured !== undefined && configured.length > 0) {
+    return configured;
+  }
+  if (process.platform !== "win32") {
+    return undefined;
+  }
+  const candidate = path.join(nativeRootDir(), "fomod-host", "VortexFomodHost.exe");
+  return existsSync(candidate) ? candidate : undefined;
+}
+
 function resolveNexusApiModule(): string | undefined {
   try {
     return require.resolve("@nexusmods/nexus-api");
@@ -241,8 +253,7 @@ export function initNativeDeployIpc(): void {
                         member.task.fomod.pluginPath || member.task.extract?.destination || "",
                       scriptPath:
                         member.task.fomod.scriptPath || member.task.extract?.destination || "",
-                      csharpHost:
-                        member.task.fomod.csharpHost || process.env.VORTEX_FOMOD_CSHARP_HOST,
+                      csharpHost: member.task.fomod.csharpHost || fomodCSharpHostPath(),
                     },
             },
           };
@@ -381,7 +392,7 @@ export function initNativeDeployIpc(): void {
               ? undefined
               : {
                   ...request.task.fomod,
-                  csharpHost: request.task.fomod.csharpHost || process.env.VORTEX_FOMOD_CSHARP_HOST,
+                  csharpHost: request.task.fomod.csharpHost || fomodCSharpHostPath(),
                 },
         },
       });
