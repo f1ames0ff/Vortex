@@ -31,6 +31,7 @@ import type {
   NativeArchiveListRequest,
   NativeArchiveListResult,
   NativeCollectionJobStatus,
+  NativeCollectionRegistrationResult,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
   NativeNxmQueueAddRequest,
@@ -472,6 +473,9 @@ export interface InvokeChannels {
     jobId: string,
     taskOnly?: boolean,
   ) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionRegistration": (
+    jobId: string,
+  ) => Promise<NativeCollectionRegistrationResult>;
   "nativeDeploy:metadataLookup": (
     request: NativeMetadataLookupRequest,
   ) => Promise<NativeMetadataLookupResult>;

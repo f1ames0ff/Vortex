@@ -177,6 +177,10 @@ export class VortexCoreClient {
     return this.request("collection.run", { jobId, taskOnly });
   }
 
+  collectionRegistration(jobId) {
+    return this.request("collection.registration", { jobId });
+  }
+
   collectionTask(request) {
     return this.request("collection.task", request);
   }

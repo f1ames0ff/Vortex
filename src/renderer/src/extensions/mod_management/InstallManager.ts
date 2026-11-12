@@ -210,6 +210,7 @@ import {
   applyInstallNatively,
   attachCollectionTaskNatively,
   cancelCollectionJobNatively,
+  collectionRegistrationNatively,
   collectionStatusNatively,
   downloadFileNatively,
   executeCollectionMemberNatively,
@@ -6903,10 +6904,21 @@ class InstallManager {
       return undefined;
     }
 
-    for (const member of status.members) {
-      if (member.status !== "installed" || member.result === undefined) {
-        continue;
-      }
+    const registration = await collectionRegistrationNatively(started.jobId).catch(() => undefined);
+    const registrations =
+      registration?.members ??
+      status.members.flatMap((member) =>
+        member.status === "installed" && member.result !== undefined
+          ? [
+              {
+                ruleIndex: member.ruleIndex,
+                ruleId: member.ruleId,
+                ...member.result,
+              },
+            ]
+          : [],
+      );
+    for (const member of registrations) {
       const dep = dependencies[member.ruleIndex];
       if (dep === undefined) {
         continue;
@@ -6915,8 +6927,8 @@ class InstallManager {
         dep.download !== undefined && downloads[dep.download]?.state === "finished"
           ? dep.download
           : undefined;
-      if (downloadId === undefined && member.result.archivePath !== undefined) {
-        downloadId = await this.importCoreArchive(api, member.result.archivePath);
+      if (downloadId === undefined && member.archivePath !== undefined) {
+        downloadId = await this.importCoreArchive(api, member.archivePath);
       }
       if (downloadId === undefined) {
         log("warn", "core collection member has no registerable download", {
@@ -6935,7 +6947,7 @@ class InstallManager {
           gameId,
           true,
           sourceModId,
-          member.result.installationPath,
+          member.installationPath,
         );
         this.finishPrebuiltDependency(api, dep, modId, downloadId, gameId, sourceModId);
       } catch (err) {

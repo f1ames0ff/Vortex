@@ -856,6 +856,30 @@ vortex::core::DownloadRequest readDownloadRequest(const json& params) {
     return request;
 }
 
+json collectionRegistrationJson(const vortex::core::CollectionJob& job) {
+    json members = json::array();
+    for (const auto& member : job.members) {
+        if (!member.result.has_value() || member.status != "installed") {
+            continue;
+        }
+        json value = {
+            {"ruleIndex", member.ruleIndex},
+            {"ruleId", member.ruleId},
+            {"modId", member.result->modId},
+            {"installationPath", member.result->installationPath},
+            {"files", member.result->files},
+        };
+        if (member.result->downloadId.has_value()) {
+            value["downloadId"] = *member.result->downloadId;
+        }
+        if (member.result->archivePath.has_value()) {
+            value["archivePath"] = *member.result->archivePath;
+        }
+        members.push_back(std::move(value));
+    }
+    return {{"jobId", job.id}, {"members", std::move(members)}};
+}
+
 json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
     const bool hasTask = member.task.download.has_value() || member.task.extract.has_value() ||
                          member.task.install.has_value() || member.task.fomod.has_value() ||
@@ -1023,8 +1047,9 @@ json dispatch(CoreState& state, const Request& request) {
               "deps.matchDownload", "deps.resolve", "collection.plan", "collection.start",
               "collection.status", "collection.next", "collection.member", "collection.pause",
               "collection.cancel", "collection.run", "collection.task",
-              "collection.execute", "module.abi", "metadata.lookup", "download.resolve",
-              "nxm.queue", "download.queue", "plugins.scan",
+              "collection.execute", "collection.registration", "module.abi",
+              "metadata.lookup", "download.resolve", "nxm.queue", "download.queue",
+              "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
               "deploy.symlink", "deploy.move", "deploy.single",
               "deployment.externalChanges", "purge"}},
@@ -1254,7 +1279,8 @@ json dispatch(CoreState& state, const Request& request) {
         };
     }
 
-    if (request.method == "collection.status" || request.method == "collection.next" ||
+    if (request.method == "collection.registration" ||
+        request.method == "collection.status" || request.method == "collection.next" ||
         request.method == "collection.pause" || request.method == "collection.cancel" ||
         request.method == "collection.member" || request.method == "collection.run" ||
         request.method == "collection.task" || request.method == "collection.execute") {
@@ -1269,6 +1295,9 @@ json dispatch(CoreState& state, const Request& request) {
 
         if (request.method == "collection.status") {
             return vortex::core::CollectionJobs::status(snapshot);
+        }
+        if (request.method == "collection.registration") {
+            return collectionRegistrationJson(snapshot);
         }
         if (request.method == "collection.next") {
             const auto selected =

@@ -19,6 +19,7 @@ import type {
   NativeArchiveListRequest,
   NativeArchiveListResult,
   NativeCollectionJobStatus,
+  NativeCollectionRegistrationResult,
   NativeCollectionMemberUpdate,
   NativeCollectionNextResult,
   NativeCollectionPlan,
@@ -274,6 +275,10 @@ export class NativeCoreClient {
 
   collectionRun(jobId: string, taskOnly = true): Promise<NativeCollectionJobStatus> {
     return this.#request("collection.run", { jobId, taskOnly });
+  }
+
+  collectionRegistration(jobId: string): Promise<NativeCollectionRegistrationResult> {
+    return this.#request("collection.registration", { jobId });
   }
 
   metadataLookup(request: NativeMetadataLookupRequest): Promise<NativeMetadataLookupResult> {

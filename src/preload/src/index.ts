@@ -78,7 +78,18 @@ try {
       collectionCancel: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionCancel", jobId),
       collectionRun: (jobId, taskOnly) =>
         betterIpcRenderer.invoke("nativeDeploy:collectionRun", jobId, taskOnly),
+      collectionRegistration: (jobId) =>
+        betterIpcRenderer.invoke("nativeDeploy:collectionRegistration", jobId),
       metadataLookup: (request) => betterIpcRenderer.invoke("nativeDeploy:metadataLookup", request),
+      nxmResolve: (request) => betterIpcRenderer.invoke("nativeDeploy:nxmResolve", request),
+      nxmQueueAdd: (request) => betterIpcRenderer.invoke("nativeDeploy:nxmQueueAdd", request),
+      nxmQueueList: () => betterIpcRenderer.invoke("nativeDeploy:nxmQueueList"),
+      nxmQueueRemove: (input) => betterIpcRenderer.invoke("nativeDeploy:nxmQueueRemove", input),
+      nxmQueueClear: () => betterIpcRenderer.invoke("nativeDeploy:nxmQueueClear"),
+      nxmQueueUpdate: (input, awaitingLink) =>
+        betterIpcRenderer.invoke("nativeDeploy:nxmQueueUpdate", input, awaitingLink),
+      nxmQueueMatch: (gameDomain, modId, fileId) =>
+        betterIpcRenderer.invoke("nativeDeploy:nxmQueueMatch", gameDomain, modId, fileId),
       collectionTask: (request) => betterIpcRenderer.invoke("nativeDeploy:collectionTask", request),
       collectionExecute: (request) =>
         betterIpcRenderer.invoke("nativeDeploy:collectionExecute", request),

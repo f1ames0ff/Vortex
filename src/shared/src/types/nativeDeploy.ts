@@ -427,6 +427,21 @@ export interface NativeCollectionMemberResult {
   files: string[];
 }
 
+export interface NativeCollectionRegistrationMember {
+  ruleIndex: number;
+  ruleId: string;
+  modId: string;
+  installationPath: string;
+  files: string[];
+  downloadId?: string;
+  archivePath?: string;
+}
+
+export interface NativeCollectionRegistrationResult {
+  jobId: string;
+  members: NativeCollectionRegistrationMember[];
+}
+
 export interface NativeNxmQueueEntry {
   input: string;
   gameDomain: string;

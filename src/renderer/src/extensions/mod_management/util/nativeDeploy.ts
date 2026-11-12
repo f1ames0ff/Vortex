@@ -13,6 +13,7 @@ import type {
   NativeArchiveListResult,
   NativeCollectionJobMember,
   NativeCollectionJobStatus,
+  NativeCollectionRegistrationResult,
   NativeCollectionTask,
   NativeCollectionNextResult,
   NativeCollectionPlan,
@@ -364,6 +365,16 @@ export async function startCollectionNatively(
     }
     throw err;
   }
+}
+
+export async function collectionRegistrationNatively(
+  jobId: string,
+): Promise<NativeCollectionRegistrationResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "collection.registration")) {
+    return undefined;
+  }
+  return window.api.nativeDeploy.collectionRegistration(jobId);
 }
 
 export async function collectionStatusNatively(

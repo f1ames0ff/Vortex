@@ -40,6 +40,7 @@ import type {
   NativeArchiveListRequest,
   NativeArchiveListResult,
   NativeCollectionJobStatus,
+  NativeCollectionRegistrationResult,
   NativeMetadataLookupRequest,
   NativeMetadataLookupResult,
   NativeNxmQueueAddRequest,
@@ -713,6 +714,7 @@ export interface NativeDeployApi {
 
   /** Starts core-driven workers for members that carry execution tasks. */
   collectionRun(jobId: string, taskOnly?: boolean): Promise<NativeCollectionJobStatus>;
+  collectionRegistration(jobId: string): Promise<NativeCollectionRegistrationResult>;
   metadataLookup(request: NativeMetadataLookupRequest): Promise<NativeMetadataLookupResult>;
   nxmResolve(request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult>;
   nxmQueueAdd(request: NativeNxmQueueAddRequest): Promise<NativeNxmQueueEntry>;

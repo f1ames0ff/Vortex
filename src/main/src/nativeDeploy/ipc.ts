@@ -254,6 +254,10 @@ export function initNativeDeployIpc(): void {
     nativeCoreClient().collectionStatus(jobId),
   );
 
+  betterIpcMain.handle("nativeDeploy:collectionRegistration", (_event, jobId: string) =>
+    nativeCoreClient().collectionRegistration(jobId),
+  );
+
   betterIpcMain.handle("nativeDeploy:collectionNext", (_event, jobId: string) =>
     nativeCoreClient().collectionNext(jobId),
   );

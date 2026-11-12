@@ -1119,6 +1119,12 @@ test("runs a collection with prebuilt member tasks", async () => {
   assert.equal(status.complete, true);
   assert.equal(status.members[0].status, "installed", status.members[0].error);
   assert.equal(status.members[0].result.modId, "PrebuiltMod");
+  const registration = await client.collectionRegistration(started.jobId);
+  assert.equal(registration.members.length, 1);
+  assert.equal(registration.members[0].ruleId, "requires_prebuilt");
+  assert.equal(registration.members[0].modId, "PrebuiltMod");
+  assert.equal(registration.members[0].installationPath, destination);
+  assert.deepEqual(registration.members[0].files, ["prebuilt.txt"]);
   assert.equal(readFileSync(join(destination, "prebuilt.txt"), "utf8"), "prebuilt-content");
 });
 
@@ -1180,6 +1186,11 @@ test("runs task-bearing members and leaves taskless ones for the fallback", asyn
   assert.equal(status.members[0].executor, "core");
   assert.equal(status.members[1].status, "pending");
   assert.equal(status.members[1].executor, "typescript");
+  const registration = await client.collectionRegistration(started.jobId);
+  assert.deepEqual(
+    registration.members.map((member) => member.ruleId),
+    ["requires_core"],
+  );
 
   const next = await client.collectionNext(started.jobId);
   assert.deepEqual(
