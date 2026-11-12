@@ -11,12 +11,14 @@ import type {
   RetryStrategy,
 } from "@vortex/shared/download";
 import { staticChunker } from "@vortex/shared/download";
+import type { NativeDownloadRequest } from "@vortex/shared/ipc";
 import type { CookieJar } from "tough-cookie";
 
 import { log } from "../logging";
 import type { NativeCoreClient } from "../nativeDeploy/service";
+import { applyDownloadAuth } from "./auth";
 import type { DownloadHandle } from "./manager";
-import { DownloadManager } from "./manager";
+import type { DownloadManager } from "./manager";
 import { ProgressReporter } from "./progress";
 
 type NativeStatus = Awaited<ReturnType<NativeCoreClient["downloadStatus"]>>;
@@ -86,7 +88,7 @@ class NativeDownloadHandle<T = unknown> implements DownloadHandle<T> {
   }): Promise<void> {
     try {
       const endpoint = probeEndpoint(this.#resolved);
-      const status = await this.#client.downloadAdd({
+      const request: NativeDownloadRequest = {
         id: this.downloadId,
         directory: path.dirname(this.#dest),
         fileName: path.basename(this.#dest),
@@ -99,7 +101,8 @@ class NativeDownloadHandle<T = unknown> implements DownloadHandle<T> {
         // The main-process downloader resumes a partial destination itself and
         // expects a failed/paused transfer to leave that file in place.
         atomic: false,
-      });
+      };
+      const status = await this.#client.downloadAdd(await applyDownloadAuth(request));
       this.#adding = false;
       this.#apply(status);
       await this.#poll();

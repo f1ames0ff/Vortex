@@ -43,7 +43,10 @@ import { setOptionalExtensions } from "./extensions/extension_manager/actions";
 import { parseExtensionInfo } from "./extensions/extension_manager/extensionInfo";
 import { extensionStateFromScan, findInstalled } from "./extensions/extension_manager/queries";
 import _sessionReducer from "./extensions/extension_manager/reducers";
+import { gameById } from "./extensions/gamemode_management/selectors";
 import type { IModReference, IModRepoId } from "./extensions/mod_management/types/IMod";
+import { lookupModMetadataNatively } from "./extensions/mod_management/util/nativeDeploy";
+import { nexusGameId } from "./extensions/nexus_integration/util/convertGameId";
 import { IPCDownloadAdapter } from "./IPCDownloadAdapter";
 import { log } from "./logging";
 import type { SanityCheck } from "./store/reduxSanity";
@@ -2103,6 +2106,38 @@ class ExtensionManager {
     return `${detail.fileMD5}_${fileName}` + `_${detail.fileSize}_${detail.gameId}`;
   }
 
+  /**
+   * Hash lookup through the core (Nexus md5_search). The renderer keeps the
+   * cache and falls back to modmeta-db when the core is disabled, lacks the
+   * capability, or the request fails.
+   */
+  private lookupModMetaNatively = (
+    detail: ILookupDetails,
+    fileMD5: string,
+    fileSize: number,
+  ): PromiseBB<ILookupResult[] | undefined> => {
+    if (detail.gameId === undefined) {
+      return PromiseBB.resolve(undefined);
+    }
+    const state = this.getApi().store.getState();
+    const domain = nexusGameId(gameById(state, detail.gameId), detail.gameId);
+    if (domain === undefined) {
+      return PromiseBB.resolve(undefined);
+    }
+    const apiKey = getSafe(state, ["confidential", "account", "nexus", "APIKey"], "") as string;
+    return PromiseBB.resolve(
+      lookupModMetadataNatively({
+        md5: fileMD5,
+        fileSize,
+        gameId: detail.gameId,
+        gameDomain: domain,
+        apiKey: apiKey.length > 0 ? apiKey : undefined,
+      }),
+    ).then((result) =>
+      result?.lookups === undefined ? undefined : (result.lookups as unknown as ILookupResult[]),
+    );
+  };
+
   private lookupModMeta = (
     detail: ILookupDetails,
     ignoreCache?: boolean,
@@ -2165,12 +2200,21 @@ class ExtensionManager {
       return PromiseBB.resolve(this.mModDBCache[lookupId]);
     }
     return promise
-      .then(() => this.getModDB())
-      .then((modDB) =>
+      .then(() =>
         fileSize !== 0 && fileMD5 !== undefined
-          ? modDB.lookup(undefined, fileMD5, fileSize, detail.gameId)
-          : [],
+          ? this.lookupModMetaNatively(detail, fileMD5, fileSize)
+          : PromiseBB.resolve(undefined),
       )
+      .then((nativeResult: ILookupResult[] | undefined) => {
+        if (nativeResult !== undefined && nativeResult.length > 0) {
+          return nativeResult;
+        }
+        return this.getModDB().then((modDB) =>
+          fileSize !== 0 && fileMD5 !== undefined
+            ? modDB.lookup(undefined, fileMD5, fileSize, detail.gameId)
+            : [],
+        );
+      })
       .then((result: ILookupResult[]) => {
         const resultSorter = this.makeSorter(detail);
         this.mModDBCache[lookupId] = result.sort(resultSorter);

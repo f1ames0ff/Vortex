@@ -87,7 +87,8 @@ describe.skipIf(!existsSync(corePath) || !existsSync(sevenZip))(
           copyFileSync(path.join(tsExtract, instruction.source), target);
         }
 
-        // Core executor: same archive and the same copy-all mapping.
+        // Core executor: the same archive and the same copy-all mapping,
+        // driven by the prebuilt task through collection.run.
         const started = await client.collectionStart({
           collectionId: "parity",
           gameId: "skyrimse",
@@ -101,34 +102,125 @@ describe.skipIf(!existsSync(corePath) || !existsSync(sevenZip))(
               phase: 1,
               ignored: false,
               status: "pending",
+              task: {
+                modId: "ParityMod",
+                extract: { archive, destination: coreExtract, sevenZip },
+                install: { temp: coreExtract, destination: coreStaging, instructions: [] },
+                copyAll: true,
+              },
             },
           ],
         });
-        await client.collectionTask({
-          jobId: started.jobId,
-          ruleId: "requires_parity",
-          task: {
-            modId: "ParityMod",
-            extract: { archive, destination: coreExtract, sevenZip },
-            install: {
-              temp: coreExtract,
-              destination: coreStaging,
-              instructions: files.map((file) => ({
-                type: "copy",
-                source: file,
-                destination: file,
-              })),
-            },
-          },
-        });
-        const executed = await client.collectionExecute({
-          jobId: started.jobId,
-          ruleId: "requires_parity",
-        });
+        await client.collectionRun(started.jobId);
+        const deadline = Date.now() + 10000;
+        let executed = await client.collectionStatus(started.jobId);
+        while (!executed.complete && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          executed = await client.collectionStatus(started.jobId);
+        }
 
         expect(executed.members.at(0)?.status).toBe("installed");
+        expect(executed.members.at(0)?.result?.modId).toBe("ParityMod");
+        expect(executed.members.at(0)?.result?.installationPath).toBe(coreStaging);
         expect(executed.complete).toBe(true);
         expect(treeHashes(coreStaging)).toEqual(treeHashes(tsStaging));
+      } finally {
+        await client.shutdown();
+        rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("runs core and TypeScript members from one mixed job", async () => {
+      const root = mkdtempSync(path.join(tmpdir(), "collection-mixed-"));
+      const coreSource = path.join(root, "core-source");
+      const tsSource = path.join(root, "ts-source");
+      const coreArchive = path.join(root, "core.zip");
+      const tsArchive = path.join(root, "ts.zip");
+      const coreExtract = path.join(root, "core-extract");
+      const coreStaging = path.join(root, "core-staging");
+      const tsExtract = path.join(root, "ts-extract");
+      const tsStaging = path.join(root, "ts-staging");
+      mkdirSync(coreSource, { recursive: true });
+      mkdirSync(tsSource, { recursive: true });
+      writeFileSync(path.join(coreSource, "core.txt"), "core-member");
+      writeFileSync(path.join(tsSource, "ts.txt"), "typescript-member");
+      execFileSync(sevenZip, ["a", "-tzip", coreArchive, "core.txt"], {
+        cwd: coreSource,
+        stdio: "ignore",
+      });
+      execFileSync(sevenZip, ["a", "-tzip", tsArchive, "ts.txt"], {
+        cwd: tsSource,
+        stdio: "ignore",
+      });
+
+      const client = new NativeCoreClient({ resolveCorePath: () => corePath });
+      try {
+        const started = await client.collectionStart({
+          collectionId: "mixed-parity",
+          gameId: "skyrimse",
+          concurrency: 1,
+          maxRetries: 0,
+          members: [
+            {
+              ruleIndex: 0,
+              ruleId: "requires_core",
+              type: "requires",
+              phase: 1,
+              ignored: false,
+              status: "pending",
+              task: {
+                modId: "CoreMod",
+                extract: { archive: coreArchive, destination: coreExtract, sevenZip },
+                install: { temp: coreExtract, destination: coreStaging, instructions: [] },
+                copyAll: true,
+              },
+            },
+            {
+              ruleIndex: 1,
+              ruleId: "requires_typescript",
+              type: "requires",
+              phase: 1,
+              ignored: false,
+              status: "pending",
+            },
+          ],
+        });
+
+        await client.collectionRun(started.jobId, true);
+        const deadline = Date.now() + 10000;
+        let status = await client.collectionStatus(started.jobId);
+        while (!status.runComplete && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          status = await client.collectionStatus(started.jobId);
+        }
+
+        expect(status.runComplete).toBe(true);
+        expect(status.members[0]?.status).toBe("installed");
+        expect(status.members[0]?.executor).toBe("core");
+        expect(status.members[1]?.status).toBe("pending");
+        expect(status.members[1]?.executor).toBe("typescript");
+
+        const next = await client.collectionNext(started.jobId);
+        expect(next.members.map((member) => member.ruleId)).toEqual(["requires_typescript"]);
+
+        // TypeScript executor reference for the taskless member.
+        execFileSync(sevenZip, ["x", "-y", `-o${tsExtract}`, tsArchive], { stdio: "ignore" });
+        for (const rel of listRelativeFiles(tsExtract)) {
+          const target = path.join(tsStaging, rel);
+          mkdirSync(path.dirname(target), { recursive: true });
+          copyFileSync(path.join(tsExtract, rel), target);
+        }
+
+        status = await client.collectionMember({
+          jobId: started.jobId,
+          ruleId: "requires_typescript",
+          status: "installed",
+          modId: "TsMod",
+        });
+
+        expect(status.complete).toBe(true);
+        expect(treeHashes(coreStaging)).toEqual(treeHashes(coreSource));
+        expect(treeHashes(tsStaging)).toEqual(treeHashes(tsSource));
       } finally {
         await client.shutdown();
         rmSync(root, { recursive: true, force: true });

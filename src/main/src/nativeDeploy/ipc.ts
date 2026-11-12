@@ -22,11 +22,16 @@ import type {
   NativePluginScanRequest,
   NativeHashFilesRequest,
   NativeInstallRequest,
+  NativeMetadataLookupRequest,
+  NativeMetadataLookupResult,
+  NativeNxmResolveRequest,
+  NativeNxmResolveResult,
   NativePurgeRequest,
   NativeStagingRequest,
 } from "@vortex/shared/ipc";
 import { app } from "electron";
 
+import { applyDownloadAuth } from "../downloading/auth";
 import { betterIpcMain } from "../ipc";
 import { NativeCoreClient, resolveDefaultCorePath } from "./service";
 
@@ -72,10 +77,29 @@ function nodeHelperPaths(): { module: string; script: string; fomod: string } {
   return { module: modulePath, script: scriptPath, fomod };
 }
 
+function resolveNexusApiModule(): string | undefined {
+  try {
+    return require.resolve("@nexusmods/nexus-api");
+  } catch {
+    return undefined;
+  }
+}
+
+function nexusApiUrls(): NativeNxmResolveRequest["apiUrls"] {
+  const urls = {
+    base: process.env.VORTEX_NEXUS_BASE_URL,
+    api: process.env.VORTEX_NEXUS_API_URL,
+    graphql: process.env.VORTEX_NEXUS_GRAPHQL_URL,
+    userService: process.env.VORTEX_NEXUS_USER_URL,
+  };
+  return Object.values(urls).some((value) => value !== undefined) ? urls : undefined;
+}
+
 function resolveSevenZipPath(): string | undefined {
   try {
     const packageJson = require.resolve("node-7z/package.json");
     const binaryModule = require.resolve("7z-bin", { paths: [path.dirname(packageJson)] });
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const binary = require(binaryModule) as string;
     // Packaged builds keep the executable outside app.asar.
     return binary.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
@@ -172,46 +196,51 @@ export function initNativeDeployIpc(): void {
 
   betterIpcMain.handle(
     "nativeDeploy:collectionStart",
-    (_event, request: NativeCollectionStartRequest) => {
+    async (_event, request: NativeCollectionStartRequest) => {
       const paths = nodeHelperPaths();
       const sevenZip = resolveSevenZipPath();
       const curl = process.env.VORTEX_CURL_PATH ?? "curl";
-      const members = request.members.map((member) => {
-        if (member.task === undefined) {
-          return member;
-        }
-        return {
-          ...member,
-          task: {
-            ...member.task,
-            download:
-              member.task.download === undefined
-                ? undefined
-                : { ...member.task.download, curl: member.task.download.curl ?? curl },
-            extract:
-              member.task.extract === undefined
-                ? undefined
-                : {
-                    ...member.task.extract,
-                    sevenZip: member.task.extract.sevenZip ?? sevenZip,
-                  },
-            fomod:
-              member.task.fomod === undefined
-                ? undefined
-                : {
-                    ...member.task.fomod,
-                    node:
-                      member.task.fomod.node || process.env.VORTEX_NODE_PATH || process.execPath,
-                    script: member.task.fomod.script || paths.script,
-                    nativeLibrary: member.task.fomod.nativeLibrary || paths.fomod,
-                    pluginPath:
-                      member.task.fomod.pluginPath || member.task.extract?.destination || "",
-                    scriptPath:
-                      member.task.fomod.scriptPath || member.task.extract?.destination || "",
-                  },
-          },
-        };
-      });
+      const members = await Promise.all(
+        request.members.map(async (member) => {
+          if (member.task === undefined) {
+            return member;
+          }
+          return {
+            ...member,
+            task: {
+              ...member.task,
+              download:
+                member.task.download === undefined
+                  ? undefined
+                  : await applyDownloadAuth({
+                      ...member.task.download,
+                      curl: member.task.download.curl ?? curl,
+                    }),
+              extract:
+                member.task.extract === undefined
+                  ? undefined
+                  : {
+                      ...member.task.extract,
+                      sevenZip: member.task.extract.sevenZip ?? sevenZip,
+                    },
+              fomod:
+                member.task.fomod === undefined
+                  ? undefined
+                  : {
+                      ...member.task.fomod,
+                      node:
+                        member.task.fomod.node || process.env.VORTEX_NODE_PATH || process.execPath,
+                      script: member.task.fomod.script || paths.script,
+                      nativeLibrary: member.task.fomod.nativeLibrary || paths.fomod,
+                      pluginPath:
+                        member.task.fomod.pluginPath || member.task.extract?.destination || "",
+                      scriptPath:
+                        member.task.fomod.scriptPath || member.task.extract?.destination || "",
+                    },
+            },
+          };
+        }),
+      );
       return nativeCoreClient().collectionStart({ ...request, members });
     },
   );
@@ -237,13 +266,42 @@ export function initNativeDeployIpc(): void {
     nativeCoreClient().collectionCancel(jobId),
   );
 
-  betterIpcMain.handle("nativeDeploy:collectionRun", (_event, jobId: string) =>
-    nativeCoreClient().collectionRun(jobId),
+  betterIpcMain.handle("nativeDeploy:collectionRun", (_event, jobId: string, taskOnly?: boolean) =>
+    nativeCoreClient().collectionRun(jobId, taskOnly),
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:metadataLookup",
+    (_event, request: NativeMetadataLookupRequest): Promise<NativeMetadataLookupResult> => {
+      const paths = nodeHelperPaths();
+      return nativeCoreClient().metadataLookup({
+        ...request,
+        node: process.env.VORTEX_NODE_PATH ?? process.execPath,
+        script: paths.script,
+        env: process.env.VORTEX_NODE_PATH === undefined ? { ELECTRON_RUN_AS_NODE: "1" } : undefined,
+      });
+    },
+  );
+
+  betterIpcMain.handle(
+    "nativeDeploy:nxmResolve",
+    (_event, request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult> => {
+      const paths = nodeHelperPaths();
+      return nativeCoreClient().downloadResolve({
+        ...request,
+        node: process.env.VORTEX_NODE_PATH ?? process.execPath,
+        script: paths.script,
+        env: process.env.VORTEX_NODE_PATH === undefined ? { ELECTRON_RUN_AS_NODE: "1" } : undefined,
+        appVersion: app.getVersion(),
+        nexusApiModule: resolveNexusApiModule(),
+        apiUrls: nexusApiUrls(),
+      });
+    },
   );
 
   betterIpcMain.handle(
     "nativeDeploy:collectionTask",
-    (_event, request: NativeCollectionTaskRequest) => {
+    async (_event, request: NativeCollectionTaskRequest) => {
       const sevenZip = request.task.extract?.sevenZip ?? resolveSevenZipPath();
       const curl = request.task.download?.curl ?? process.env.VORTEX_CURL_PATH ?? "curl";
       return nativeCoreClient().collectionTask({
@@ -251,7 +309,9 @@ export function initNativeDeployIpc(): void {
         task: {
           ...request.task,
           download:
-            request.task.download === undefined ? undefined : { ...request.task.download, curl },
+            request.task.download === undefined
+              ? undefined
+              : await applyDownloadAuth({ ...request.task.download, curl }),
           extract:
             request.task.extract === undefined
               ? undefined
@@ -270,11 +330,13 @@ export function initNativeDeployIpc(): void {
       nativeCoreClient().collectionExecute(request),
   );
 
-  betterIpcMain.handle("nativeDeploy:downloadAdd", (_event, request: NativeDownloadRequest) =>
-    nativeCoreClient().downloadAdd({
-      curl: process.env.VORTEX_CURL_PATH ?? "curl",
-      ...request,
-    }),
+  betterIpcMain.handle("nativeDeploy:downloadAdd", async (_event, request: NativeDownloadRequest) =>
+    nativeCoreClient().downloadAdd(
+      await applyDownloadAuth({
+        curl: process.env.VORTEX_CURL_PATH ?? "curl",
+        ...request,
+      }),
+    ),
   );
   betterIpcMain.handle("nativeDeploy:downloadStatus", (_event, id: string) =>
     nativeCoreClient().downloadStatus(id),

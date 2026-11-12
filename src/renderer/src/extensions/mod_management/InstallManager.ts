@@ -6732,10 +6732,10 @@ class InstallManager {
   }
 
   /**
-   * Two-phase collection run: pre-build one task per pending member (download
-   * and/or extract plus copyAll/FOMOD), let the core own the whole job, then
-   * import archives and register the prepared mods. Falls back to the
-   * collection.next path when a member can't be described as a task.
+   * Two-phase collection run: pre-build one task per representable pending
+   * member, let the core own task execution and failure fallback, then import
+   * archives and register the prepared mods. Taskless/fallback members are
+   * scheduled by core through collection.next and installed by TypeScript.
    */
   private async tryRunPrebuiltCollection(
     api: IExtensionApi,
@@ -6752,23 +6752,28 @@ class InstallManager {
     const members: NativeCollectionJobMember[] = [];
     const workRoots: string[] = [];
     const temporaryArchives: string[] = [];
+    let taskCount = 0;
 
     for (const [index, dep] of dependencies.entries()) {
       const ruleId = dep.sessionRuleId ?? `requires_${referenceId(dep.reference) ?? "undefined"}`;
+      const base: NativeCollectionJobMember = {
+        ruleIndex: index,
+        ruleId,
+        type: "requires",
+        phase: dep.phase ?? 0,
+        ignored: false,
+        status: "pending",
+      };
       if (dep.mod !== undefined) {
-        members.push({
-          ruleIndex: index,
-          ruleId,
-          type: "requires",
-          phase: dep.phase ?? 0,
-          ignored: false,
-          status: "installed",
-          modId: dep.mod.id,
-        });
+        members.push({ ...base, status: "installed", modId: dep.mod.id });
         continue;
       }
+      // Members the core cannot describe stay pending in the same job so the
+      // existing collection.next/TypeScript path can install them afterwards.
+      const leaveToTypescript = () => members.push(base);
       if (dep.extra?.localPath !== undefined) {
-        return undefined;
+        leaveToTypescript();
+        continue;
       }
 
       let archivePath: string | undefined;
@@ -6776,17 +6781,29 @@ class InstallManager {
         archivePath = this.downloadPathForDependency(api, dep.download);
       }
 
+      let archiveIsFomod = false;
+      if (archivePath !== undefined) {
+        const listing = await listArchiveNatively(archivePath).catch(() => undefined);
+        archiveIsFomod =
+          listing?.entries.some((entry) => {
+            const normalized = entry.path.replace(/\\/g, "/").toLowerCase();
+            return !entry.directory && normalized.endsWith("fomod/moduleconfig.xml");
+          }) ?? false;
+      }
+
       let downloadTask: NativeCollectionTask["download"];
       if (archivePath === undefined) {
         const source = dep.lookupResults[0]?.value?.sourceURI;
         if (typeof source !== "string" || !/^https?:/i.test(source)) {
-          return undefined;
+          leaveToTypescript();
+          continue;
         }
         let url: URL;
         try {
           url = new URL(source);
         } catch {
-          return undefined;
+          leaveToTypescript();
+          continue;
         }
         const fromPath = path.basename(decodeURIComponent(url.pathname));
         const fileName =
@@ -6806,10 +6823,8 @@ class InstallManager {
       }
 
       const choices = dep.installerChoices as { type?: string; options?: unknown } | undefined;
-      const isFomod = choices?.type === "fomod";
-      if (isFomod && choices.options === undefined) {
-        return undefined;
-      }
+      const isFomod = choices?.type === "fomod" || archiveIsFomod;
+      const preset = choices?.type === "fomod" ? choices.options : undefined;
 
       const workRoot = path.join(
         os.tmpdir(),
@@ -6832,26 +6847,22 @@ class InstallManager {
               nativeLibrary: "",
               node: "",
               script: "",
-              preset: choices.options,
+              preset,
               pluginPath: "",
               scriptPath: "",
             }
           : undefined,
         modId: dep.reference.tag ?? dep.reference.description ?? ruleId,
       };
-      members.push({
-        ruleIndex: index,
-        ruleId,
-        type: "requires",
-        phase: dep.phase ?? 0,
-        ignored: false,
-        status: "pending",
-        task,
-      });
+      ++taskCount;
+      members.push({ ...base, task });
     }
 
-    if (members.every((member) => member.status === "installed" || member.ignored)) {
-      return dependencies;
+    if (taskCount === 0) {
+      if (members.every((member) => member.status === "installed" || member.ignored)) {
+        return dependencies;
+      }
+      return undefined;
     }
 
     const started = await startCollectionNatively(sourceModId, gameId, members, {
@@ -6862,27 +6873,32 @@ class InstallManager {
       return undefined;
     }
     this.mNativeCollectionJobs.set(sourceModId, started.jobId);
-    const running = await runCollectionJobNatively(started.jobId).catch(() => undefined);
+    const running = await runCollectionJobNatively(started.jobId, true).catch(() => undefined);
     if (running === undefined) {
+      this.mNativeCollectionJobs.delete(sourceModId);
       await cancelCollectionJobNatively(started.jobId).catch(() => undefined);
       await Promise.all(workRoots.map((root) => fs.removeAsync(root).catch(() => undefined)));
       return undefined;
     }
 
     let status = running;
+    const runDone = (value: typeof status) => value.runComplete ?? value.complete;
     const deadline = Date.now() + 30 * 60 * 1000;
-    while (!status.complete && Date.now() < deadline) {
+    while (!runDone(status) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 250));
       const current = await collectionStatusNatively(started.jobId).catch(() => undefined);
       if (current === undefined) {
+        this.mNativeCollectionJobs.delete(sourceModId);
         return undefined;
       }
       status = current;
       if (status.cancelled) {
+        this.mNativeCollectionJobs.delete(sourceModId);
         return undefined;
       }
     }
-    if (!status.complete) {
+    if (!runDone(status)) {
+      this.mNativeCollectionJobs.delete(sourceModId);
       await cancelCollectionJobNatively(started.jobId).catch(() => undefined);
       return undefined;
     }
@@ -7415,11 +7431,16 @@ class InstallManager {
         downloads,
       );
       if (prebuilt !== undefined) {
-        return prebuilt;
+        if (dependencies.every((dep) => dep.mod !== undefined)) {
+          return prebuilt;
+        }
+        // Core-registered members imported new downloads; refresh so the
+        // TypeScript fallback does not download them a second time.
+        downloads = api.getState().persistent.downloads.files;
       }
     }
 
-    if (!recommended && dependencies.length > 0) {
+    if (!recommended && dependencies.length > 0 && !this.mNativeCollectionJobs.has(sourceModId)) {
       const previousJob = this.mNativeCollectionJobs.get(sourceModId);
       if (previousJob !== undefined) {
         this.mNativeCollectionJobs.delete(sourceModId);

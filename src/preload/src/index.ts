@@ -76,7 +76,9 @@ try {
         betterIpcRenderer.invoke("nativeDeploy:collectionMember", request),
       collectionPause: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionPause", jobId),
       collectionCancel: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionCancel", jobId),
-      collectionRun: (jobId) => betterIpcRenderer.invoke("nativeDeploy:collectionRun", jobId),
+      collectionRun: (jobId, taskOnly) =>
+        betterIpcRenderer.invoke("nativeDeploy:collectionRun", jobId, taskOnly),
+      metadataLookup: (request) => betterIpcRenderer.invoke("nativeDeploy:metadataLookup", request),
       collectionTask: (request) => betterIpcRenderer.invoke("nativeDeploy:collectionTask", request),
       collectionExecute: (request) =>
         betterIpcRenderer.invoke("nativeDeploy:collectionExecute", request),

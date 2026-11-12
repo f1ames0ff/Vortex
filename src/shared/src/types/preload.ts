@@ -40,12 +40,15 @@ import type {
   NativeArchiveListRequest,
   NativeArchiveListResult,
   NativeCollectionJobStatus,
+  NativeMetadataLookupRequest,
+  NativeMetadataLookupResult,
+  NativeNxmResolveRequest,
+  NativeNxmResolveResult,
   NativeCollectionMemberUpdate,
   NativeCollectionNextResult,
   NativeCollectionPlan,
   NativeCollectionStartRequest,
   NativeCollectionStartResult,
-  NativeCollectionTask,
   NativeCollectionTaskRequest,
   NativeDepsRequest,
   NativeDepsResolveResult,
@@ -706,7 +709,9 @@ export interface NativeDeployApi {
   collectionCancel(jobId: string): Promise<NativeCollectionJobStatus>;
 
   /** Starts core-driven workers for members that carry execution tasks. */
-  collectionRun(jobId: string): Promise<NativeCollectionJobStatus>;
+  collectionRun(jobId: string, taskOnly?: boolean): Promise<NativeCollectionJobStatus>;
+  metadataLookup(request: NativeMetadataLookupRequest): Promise<NativeMetadataLookupResult>;
+  nxmResolve(request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult>;
 
   /** Attaches an execution task to one collection member. */
   collectionTask(request: NativeCollectionTaskRequest): Promise<NativeCollectionJobStatus>;

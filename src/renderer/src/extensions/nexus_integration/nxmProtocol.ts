@@ -21,6 +21,7 @@ import { createKeyedCache } from "../../util/keyedCache";
 import { batchDispatch } from "../../util/util";
 import type { IResolvedURL } from "../download_management/types/ProtocolHandlers";
 import { SITE_ID } from "../gamemode_management/constants";
+import { resolveNxmNatively } from "../mod_management/util/nativeDeploy";
 import { addFreeUserDLItem, removeFreeUserDLItem } from "./actions/session";
 import { refreshMembership, scheduleMembershipRefresh } from "./membership";
 import NXMUrl from "./NXMUrl";
@@ -30,6 +31,7 @@ import { bringToFront, ensureLoggedIn, getInfoGraphQL, oauthCallback, startDownl
 import { findLatestUpdate } from "./util/checkModsVersion";
 import { nxmPageId } from "./util/convertGameId";
 import { nexusFilePageUrl } from "./util/nexus_urls/nexusUrls";
+import { getAccessToken } from "./util/oauthSession";
 
 const DL_QUERY: IRevisionQuery = {
   id: true,
@@ -501,7 +503,63 @@ export class NxmProtocol {
     return resolved;
   }
 
+  async #nativeAuth(): Promise<{ accessToken?: string; apiKey?: string } | undefined> {
+    const nexus = this.#api.getState().confidential.account?.["nexus"];
+    if (nexus?.OAuthCredentials !== undefined) {
+      const accessToken = await getAccessToken(this.#api).catch((err) => {
+        log("debug", "failed to read OAuth token for native nxm resolution", {
+          error: getErrorMessageOrDefault(err),
+        });
+        return undefined;
+      });
+      if (accessToken !== undefined) {
+        return { accessToken };
+      }
+    }
+    if (nexus?.APIKey !== undefined && nexus.APIKey.length > 0) {
+      return { apiKey: nexus.APIKey };
+    }
+    return undefined;
+  }
+
+  async #nativeDownload(
+    url: NXMUrl,
+    pageId: string,
+    revisionNumber?: number,
+  ): Promise<IFoundDownload | undefined> {
+    const auth = await this.#nativeAuth();
+    if (auth === undefined) {
+      return undefined;
+    }
+    const native = await resolveNxmNatively({
+      type: url.type === "collection" ? "collection" : "mod",
+      gameDomain: pageId,
+      ...(url.type === "collection"
+        ? { collection: { slug: url.collectionSlug, revisionNumber } }
+        : {
+            modId: url.modId,
+            fileId: url.fileId,
+            key: url.key,
+            expires: url.expires,
+            source: url.source,
+          }),
+      ...auth,
+    });
+    if (native === undefined || native.urls.length === 0) {
+      return undefined;
+    }
+    return {
+      urls: native.urls.map((URI) => ({ URI, name: "", short_name: "" })),
+      ids: native.ids as unknown as Record<string, unknown>,
+    };
+  }
+
   async #modDownload(url: NXMUrl, pageId: string): Promise<IFoundDownload> {
+    const native = await this.#nativeDownload(url, pageId);
+    if (native !== undefined) {
+      return native;
+    }
+
     return {
       urls: await this.#nexus.getDownloadURLs(
         url.modId,
@@ -519,6 +577,15 @@ export class NxmProtocol {
     url: NXMUrl,
     revisionNumber: number | undefined,
   ): Promise<IFoundDownload> {
+    const native = await this.#nativeDownload(
+      url,
+      nxmPageId(this.#api.getState(), url.gameId),
+      revisionNumber,
+    );
+    if (native !== undefined) {
+      return native;
+    }
+
     let revision: Partial<IRevision>;
     try {
       revision = await this.#nexus.getCollectionRevisionGraph(

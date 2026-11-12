@@ -5,6 +5,7 @@
 #include "vortex/deployment/platform.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <fstream>
 #include <set>
@@ -25,7 +26,13 @@ bool isKnownStatus(const std::string& status) {
     return known.contains(status);
 }
 
-void advancePhase(CollectionJob& job) {
+bool memberHasTask(const CollectionMemberState& member) {
+    return member.task.download.has_value() || member.task.extract.has_value() ||
+           member.task.install.has_value() || member.task.fomod.has_value() ||
+           member.task.copyAll;
+}
+
+void advancePhase(CollectionJob& job, bool taskOnly = false) {
     std::set<int> phases;
     for (const auto& member : job.members) {
         phases.insert(member.phase);
@@ -35,11 +42,19 @@ void advancePhase(CollectionJob& job) {
         return;
     }
 
+    const auto hasWork = [taskOnly](const CollectionMemberState& member) {
+        if (collectionMemberTerminal(member.status)) {
+            return false;
+        }
+        // Core workers may skip taskless members, but the TypeScript pull must
+        // not advance past a phase that still has core work.
+        return !taskOnly || memberHasTask(member);
+    };
+
     for (;;) {
         bool currentHasNonTerminal = false;
         for (const auto& member : job.members) {
-            if (member.phase == job.allowedPhase &&
-                !collectionMemberTerminal(member.status)) {
+            if (member.phase == job.allowedPhase && hasWork(member)) {
                 currentHasNonTerminal = true;
                 break;
             }
@@ -53,11 +68,11 @@ void advancePhase(CollectionJob& job) {
             if (phase <= job.allowedPhase) {
                 continue;
             }
-            const bool hasWork = std::any_of(
-                job.members.begin(), job.members.end(), [&](const auto& member) {
-                    return member.phase == phase && !collectionMemberTerminal(member.status);
-                });
-            if (hasWork) {
+            const bool work = std::any_of(job.members.begin(), job.members.end(),
+                                          [&](const auto& member) {
+                                              return member.phase == phase && hasWork(member);
+                                          });
+            if (work) {
                 nextPhase = phase;
                 break;
             }
@@ -355,7 +370,8 @@ void CollectionJobs::update(const std::string& jobId, const CollectionMemberUpda
     advancePhase(job);
 }
 
-std::vector<CollectionMemberState> CollectionJobs::next(const std::string& jobId) {
+std::vector<CollectionMemberState> CollectionJobs::next(const std::string& jobId,
+                                                        bool taskOnly) {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto found = jobs_.find(jobId);
     if (found == jobs_.end()) {
@@ -366,7 +382,18 @@ std::vector<CollectionMemberState> CollectionJobs::next(const std::string& jobId
         return {};
     }
 
-    advancePhase(job);
+    if (!taskOnly) {
+        // A taskOnly run may have advanced past phases that still contain
+        // taskless members. Rewind to the earliest one so the TypeScript
+        // fallback can pick them up.
+        for (const auto& member : job.members) {
+            if (member.phase < job.allowedPhase &&
+                !collectionMemberTerminal(member.status)) {
+                job.allowedPhase = std::min(job.allowedPhase, member.phase);
+            }
+        }
+    }
+    advancePhase(job, taskOnly);
     std::set<int> phases;
     for (const auto& member : job.members) {
         phases.insert(member.phase);
@@ -376,7 +403,8 @@ std::vector<CollectionMemberState> CollectionJobs::next(const std::string& jobId
         const auto active = std::count_if(
             job.members.begin(), job.members.end(), [&](const auto& member) {
                 return member.phase == job.allowedPhase &&
-                       collectionMemberActive(member.status);
+                       collectionMemberActive(member.status) &&
+                       (!taskOnly || memberHasTask(member));
             });
         const auto capacity =
             job.concurrency <= 0 ? job.members.size() : static_cast<std::size_t>(job.concurrency);
@@ -391,7 +419,8 @@ std::vector<CollectionMemberState> CollectionJobs::next(const std::string& jobId
                 break;
             }
             if (member.phase != job.allowedPhase ||
-                (member.status != "pending" && member.status != "downloaded")) {
+                (member.status != "pending" && member.status != "downloaded") ||
+                memberHasTask(member) != taskOnly) {
                 continue;
             }
             member.status = "queued";
@@ -406,7 +435,7 @@ std::vector<CollectionMemberState> CollectionJobs::next(const std::string& jobId
         }
 
         const auto previous = job.allowedPhase;
-        advancePhase(job);
+        advancePhase(job, taskOnly);
         if (job.allowedPhase == previous) {
             break;
         }
@@ -513,7 +542,22 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
                 throw std::runtime_error("install.destination is required");
             }
             if (member.task.copyAll) {
-                for (const auto& file : listTree(install.tempPath)) {
+                const auto extractedFiles = listTree(install.tempPath);
+                if (!member.task.fomod.has_value()) {
+                    for (const auto& file : extractedFiles) {
+                        auto lower = file;
+                        std::transform(lower.begin(), lower.end(), lower.begin(),
+                                       [](unsigned char c) {
+                                           return static_cast<char>(std::tolower(c));
+                                       });
+                        if (lower == "fomod/moduleconfig.xml") {
+                            throw std::runtime_error(
+                                "FOMOD archive requires installer choices; falling back to "
+                                "the UI installer");
+                        }
+                    }
+                }
+                for (const auto& file : extractedFiles) {
                     install.instructions.push_back(
                         {InstallInstructionType::Copy, file, file, "", false});
                 }
@@ -560,11 +604,38 @@ void CollectionJobs::executeMember(const std::string& jobId, const CollectionMem
                        false,
                        std::move(result)});
     } catch (const std::exception& err) {
-        update(jobId, {member.ruleId, "failed", std::nullopt, std::nullopt, err.what(), true, std::nullopt});
+        update(jobId, {member.ruleId, "failed", std::nullopt, std::nullopt, err.what(), true,
+                       std::nullopt});
+        handOffToFallback(jobId, member.ruleId);
     } catch (...) {
         update(jobId, {member.ruleId, "failed", std::nullopt, std::nullopt,
                        "unknown collection task error", true, std::nullopt});
+        handOffToFallback(jobId, member.ruleId);
     }
+}
+
+void CollectionJobs::handOffToFallback(const std::string& jobId, const std::string& ruleId) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto found = jobs_.find(jobId);
+    if (found == jobs_.end()) {
+        return;
+    }
+    const auto member = std::find_if(found->second.members.begin(), found->second.members.end(),
+                                     [&](const auto& candidate) {
+                                         return candidate.ruleId == ruleId;
+                                     });
+    if (member == found->second.members.end() || member->status != "failed") {
+        return;
+    }
+    // The core exhausted its retries. Clear the task so the TypeScript
+    // executor can pick the member up through collection.next, while the
+    // renderer keeps owning Redux/download registration.
+    member->status = "pending";
+    member->fallback = true;
+    member->task = CollectionTask{};
+    member->error.clear();
+    found->second.lastProgress = deployment::platform::now_ms();
+    advancePhase(found->second);
 }
 
 bool CollectionJobs::setTask(const std::string& jobId, const std::string& ruleId,
@@ -582,6 +653,7 @@ bool CollectionJobs::setTask(const std::string& jobId, const std::string& ruleId
         return false;
     }
     member->task = std::move(task);
+    member->fallback = false;
     found->second.lastProgress = deployment::platform::now_ms();
     return true;
 }
@@ -610,7 +682,7 @@ bool CollectionJobs::execute(const std::string& jobId, const std::string& ruleId
     return copy(jobId, result);
 }
 
-void CollectionJobs::run(const std::string& jobId, DownloadQueue& downloads) {
+void CollectionJobs::run(const std::string& jobId, DownloadQueue& downloads, bool taskOnly) {
     std::thread previous;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -636,7 +708,7 @@ void CollectionJobs::run(const std::string& jobId, DownloadQueue& downloads) {
         previous.join();
     }
 
-    std::thread worker([this, &downloads, jobId] {
+    std::thread worker([this, &downloads, jobId, taskOnly] {
         for (;;) {
             CollectionJob snapshot;
             if (!copy(jobId, snapshot) || stopping_) {
@@ -645,16 +717,18 @@ void CollectionJobs::run(const std::string& jobId, DownloadQueue& downloads) {
             if (snapshot.cancelled || snapshot.paused) {
                 return;
             }
-            const bool complete =
-                std::all_of(snapshot.members.begin(), snapshot.members.end(),
-                            [](const auto& member) {
-                                return collectionMemberTerminal(member.status);
-                            });
+            const bool complete = std::all_of(
+                snapshot.members.begin(), snapshot.members.end(), [taskOnly](const auto& member) {
+                    if (taskOnly && !memberHasTask(member)) {
+                        return true;
+                    }
+                    return collectionMemberTerminal(member.status);
+                });
             if (complete) {
                 return;
             }
 
-            const auto selected = next(jobId);
+            const auto selected = next(jobId, taskOnly);
             if (selected.empty()) {
                 std::unique_lock<std::mutex> lock(mutex_);
                 wakeup_.wait_for(lock, std::chrono::milliseconds(100));
@@ -693,8 +767,9 @@ json CollectionJobs::status(const CollectionJob& job) {
             {"ignored", member.ignored},
             {"status", member.status},
             {"attempts", member.attempts},
-            {"hasTask", member.task.download.has_value() || member.task.extract.has_value() ||
-                            member.task.install.has_value()},
+            {"executor", memberHasTask(member) ? "core" : "typescript"},
+            {"fallback", member.fallback},
+            {"hasTask", memberHasTask(member)},
         };
         if (member.modId.has_value()) {
             value["modId"] = *member.modId;
@@ -727,6 +802,10 @@ json CollectionJobs::status(const CollectionJob& job) {
                                       [](const auto& member) {
                                           return collectionMemberTerminal(member.status);
                                       });
+    const bool runComplete = std::all_of(
+        job.members.begin(), job.members.end(), [](const auto& member) {
+            return !memberHasTask(member) || collectionMemberTerminal(member.status);
+        });
     const bool stalled =
         !complete && !job.paused && !job.cancelled &&
         (now - job.lastProgress) > job.stallMs;
@@ -751,6 +830,7 @@ json CollectionJobs::status(const CollectionJob& job) {
         {"members", std::move(members)},
         {"counts", std::move(counts)},
         {"complete", complete},
+        {"runComplete", runComplete},
         {"paused", job.paused},
         {"cancelled", job.cancelled},
         {"stalled", stalled},

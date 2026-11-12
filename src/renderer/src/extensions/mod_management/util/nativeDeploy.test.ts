@@ -45,6 +45,7 @@ import {
   extractArchiveNatively,
   hashFilesNatively,
   inspectStagingNatively,
+  lookupModMetadataNatively,
   nextCollectionMembersNatively,
   pauseCollectionJobNatively,
   planCollectionNatively,
@@ -85,6 +86,7 @@ interface FakeNativeDeploy {
   collectionRun: ReturnType<typeof vi.fn>;
   collectionTask: ReturnType<typeof vi.fn>;
   collectionExecute: ReturnType<typeof vi.fn>;
+  metadataLookup: ReturnType<typeof vi.fn>;
   downloadAdd: ReturnType<typeof vi.fn>;
   downloadStatus: ReturnType<typeof vi.fn>;
   downloadList: ReturnType<typeof vi.fn>;
@@ -139,6 +141,7 @@ beforeEach(() => {
     collectionRun: vi.fn(),
     collectionTask: vi.fn(),
     collectionExecute: vi.fn(),
+    metadataLookup: vi.fn(),
     downloadAdd: vi.fn(),
     downloadStatus: vi.fn(),
     downloadList: vi.fn(),
@@ -792,13 +795,46 @@ describe("native staging adapter", () => {
         },
       ],
     });
-    expect(nativeDeploy.collectionRun).toHaveBeenCalledWith("job-1");
+    expect(nativeDeploy.collectionRun).toHaveBeenCalledWith("job-1", undefined);
     expect(nativeDeploy.collectionMember).toHaveBeenCalledWith({
       jobId: "job-1",
       ruleId: "requires_a",
       status: "installed",
       modId: "mod-a",
     });
+  });
+
+  it("looks up metadata through the core and falls back when unavailable", async () => {
+    nativeDeploy.status.mockResolvedValue({
+      enabled: true,
+      available: true,
+      capabilities: ["metadata.lookup"],
+    });
+    const request = {
+      md5: "0123456789abcdef0123456789abcdef",
+      fileSize: 2048,
+      gameId: "skyrimse",
+      gameDomain: "skyrimspecialedition",
+      apiKey: "key",
+    };
+    const lookups = [
+      {
+        key: "hash:0123456789abcdef0123456789abcdef:2048:skyrimse:",
+        value: { fileName: "test.zip", source: "nexus" },
+      },
+    ];
+    nativeDeploy.metadataLookup.mockResolvedValue({ lookups });
+
+    expect(await lookupModMetadataNatively(request)).toEqual({ lookups });
+    expect(nativeDeploy.metadataLookup).toHaveBeenCalledWith(request);
+
+    nativeDeploy.status.mockResolvedValue({
+      enabled: true,
+      available: true,
+      capabilities: [],
+    });
+    resetNativeDeployStatus();
+    expect(await lookupModMetadataNatively(request)).toBeUndefined();
   });
 
   it("downloads a direct URL through the core queue", async () => {

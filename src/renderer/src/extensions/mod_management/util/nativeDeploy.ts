@@ -33,6 +33,10 @@ import type {
   NativeInstallRequest,
   NativeInstallResult,
   NativeLookupMod,
+  NativeMetadataLookupRequest,
+  NativeMetadataLookupResult,
+  NativeNxmResolveRequest,
+  NativeNxmResolveResult,
   NativeModReference,
   NativeModStatus,
   NativePluginOrderResult,
@@ -490,12 +494,56 @@ export async function executeCollectionMemberNatively(
 /** Start core workers for a collection job whose members carry tasks. */
 export async function runCollectionJobNatively(
   jobId: string,
+  taskOnly?: boolean,
 ): Promise<NativeCollectionJobStatus | undefined> {
   const status = await nativeDeployStatus();
   if (!status.enabled || !status.available || !coreSupports(status, "collection.run")) {
     return undefined;
   }
-  return window.api.nativeDeploy.collectionRun(jobId);
+  return window.api.nativeDeploy.collectionRun(jobId, taskOnly);
+}
+
+/**
+ * Look up Nexus file metadata by MD5 in the core. Returns normalized lookup
+ * results, or `undefined` when the native path is unavailable/failed so the
+ * caller can use the existing modmeta-db implementation.
+ */
+export async function lookupModMetadataNatively(
+  request: NativeMetadataLookupRequest,
+): Promise<NativeMetadataLookupResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "metadata.lookup")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.metadataLookup(request);
+  } catch (err) {
+    log("debug", "native metadata lookup failed", {
+      error: getErrorMessageOrDefault(err),
+      md5: request.md5,
+    });
+    return undefined;
+  }
+}
+
+/** Resolve an nxm:// link through the core/helper Nexus API client. */
+export async function resolveNxmNatively(
+  request: NativeNxmResolveRequest,
+): Promise<NativeNxmResolveResult | undefined> {
+  const status = await nativeDeployStatus();
+  if (!status.enabled || !status.available || !coreSupports(status, "download.resolve")) {
+    return undefined;
+  }
+  try {
+    return await window.api.nativeDeploy.nxmResolve(request);
+  } catch (err) {
+    log("debug", "native nxm resolution failed", {
+      error: getErrorMessageOrDefault(err),
+      modId: request.modId,
+      fileId: request.fileId,
+    });
+    return undefined;
+  }
 }
 
 /**

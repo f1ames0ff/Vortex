@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { NativeCoreClient } from "../nativeDeploy/service";
+import { configureDownloadAuth, resetDownloadAuthForTests } from "./auth";
 import { DownloadManager } from "./manager";
 import { HybridDownloadManager } from "./nativeManager";
 import {
@@ -80,6 +81,42 @@ describe.skipIf(!existsSync(corePath))("HybridDownloadManager", () => {
       expect(handle.getState().bytesReceived).toBe(body.length);
       expect(Buffer.compare(await readFile(dest), body)).toBe(0);
     } finally {
+      await client.shutdown();
+      route.deregister();
+      await server.close();
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("adds Electron session cookies to core downloads", async () => {
+    const body = randomBytes(64 * 1024);
+    const server = await createSharedTestServer();
+    const route = server.route(async (ctx) => {
+      if (ctx.req.headers.cookie !== "session=abc") {
+        await writeResponse(ctx, 401, {});
+        return;
+      }
+      await serveFile({ body })(ctx);
+    });
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "native-download-"));
+    const client = makeClient();
+    try {
+      configureDownloadAuth({
+        cookies: { get: async () => [{ name: "session", value: "abc" }] },
+        resolveProxy: async () => "DIRECT",
+      } as never);
+      const manager = new HybridDownloadManager(new DownloadManager({ concurrency: 1 }), client);
+      const dest = path.join(tmp, "cookie.bin");
+      const handle = await manager.download(route.url, dest, () =>
+        Promise.resolve({ url: new URL(route.url) }),
+      );
+
+      await handle.promise;
+
+      expect(handle.getState().status).toBe("completed");
+      expect(Buffer.compare(await readFile(dest), body)).toBe(0);
+    } finally {
+      resetDownloadAuthForTests();
       await client.shutdown();
       route.deregister();
       await server.close();

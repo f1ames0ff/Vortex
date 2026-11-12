@@ -1030,19 +1030,24 @@ void testCollectionRunRetries() {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (std::chrono::steady_clock::now() < deadline) {
         check(jobs.copy(id, snapshot), "retry job exists");
-        if (std::all_of(snapshot.members.begin(), snapshot.members.end(),
-                        [](const auto& entry) {
-                            return vortex::core::collectionMemberTerminal(entry.status);
-                        })) {
+        if (vortex::core::CollectionJobs::status(snapshot)["runComplete"].get<bool>()) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 
-    check(snapshot.members[0].status == "failed", "collection retry ends failed");
+    check(snapshot.members[0].status == "pending", "failed task handed to fallback");
+    check(snapshot.members[0].fallback, "collection fallback flag");
     check(snapshot.members[0].attempts == 2, "collection retry honours maxRetries");
+    const auto status = vortex::core::CollectionJobs::status(snapshot);
+    check(status["members"][0]["executor"] == "typescript",
+          "fallback member owned by typescript");
+    check(!status["complete"].get<bool>(), "fallback keeps job incomplete");
+    jobs.update(id, {"requires_missing", "installed", "mod-a", std::nullopt, "", false,
+                     std::nullopt});
+    jobs.copy(id, snapshot);
     check(vortex::core::CollectionJobs::status(snapshot)["complete"].get<bool>(),
-          "failed collection is complete");
+          "typescript completion finishes the job");
 
     fs::remove_all(root);
 }

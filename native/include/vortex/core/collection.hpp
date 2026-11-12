@@ -61,6 +61,7 @@ struct CollectionMemberState {
     std::optional<std::string> downloadId;
     std::string error;
     int attempts = 0;
+    bool fallback = false;
     CollectionTask task;
     std::optional<CollectionMemberResult> result;
 };
@@ -109,15 +110,16 @@ public:
     void touch(const std::string& jobId);
 
     // Selects up to the job's concurrency from the allowed phase, marks them
-    // queued, and advances the phase when the current one is settled.
-    std::vector<CollectionMemberState> next(const std::string& jobId);
+    // queued, and advances the phase when the current one is settled. With
+    // taskOnly, taskless members are left pending for the TypeScript fallback.
+    std::vector<CollectionMemberState> next(const std::string& jobId, bool taskOnly = false);
 
     /**
      * Starts a worker that repeatedly takes members from `next` and executes
      * their download/extract/install task. This is the core-driven counterpart
      * to the renderer calling `next`/`member` itself.
      */
-    void run(const std::string& jobId, DownloadQueue& downloads);
+    void run(const std::string& jobId, DownloadQueue& downloads, bool taskOnly = true);
 
     /** Attach or replace the execution task of one member. */
     bool setTask(const std::string& jobId, const std::string& ruleId, CollectionTask task);
@@ -135,6 +137,7 @@ public:
 private:
     void executeMember(const std::string& jobId, const CollectionMemberState& member,
                        DownloadQueue& downloads);
+    void handOffToFallback(const std::string& jobId, const std::string& ruleId);
     void stopWorkers();
 
     mutable std::mutex mutex_;

@@ -26,6 +26,7 @@ import winapi from "winapi-bindings";
 import { shutdownBsdiffWorker } from "./bsdiff/host";
 import { parseCommandline, updateStartupSettings } from "./cli";
 import { installDevelExtensions } from "./devel";
+import { configureDownloadAuth } from "./downloading/auth";
 import { isQuitting, markQuitting, terminate, terminateAsync } from "./errorHandling";
 import { disableErrorReporting, reportCrash } from "./errorReporting";
 import { setupMainExtensions } from "./extensions";
@@ -212,6 +213,10 @@ class Application {
     // so getHandle() works immediately. The returned promise resolves
     // once the window is ready to be shown.
     this.mMainWindowReady = this.mMainWindow.create();
+    const windowHandle = this.mMainWindow.getHandle();
+    if (windowHandle !== null) {
+      configureDownloadAuth(windowHandle.webContents.session);
+    }
   }
 
   private async awaitMainWindowReady(): Promise<void> {

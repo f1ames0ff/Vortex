@@ -13,12 +13,18 @@
 #include "vortex/core/install.hpp"
 #include "vortex/core/module_host.hpp"
 #include "vortex/core/plugins.hpp"
+#include "vortex/core/process.hpp"
 #include "vortex/core/status.hpp"
 #include "vortex/game/descriptor.hpp"
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <filesystem>
+#include <fstream>
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 #include <iostream>
 #include <map>
 #include <memory>
@@ -409,6 +415,174 @@ std::vector<std::string> stringArray(const json& object, const char* key) {
     return result;
 }
 
+std::string jsonId(const json& object, const char* key) {
+    if (!object.is_object() || !object.contains(key)) {
+        return {};
+    }
+    const auto& value = object[key];
+    if (value.is_string()) {
+        return value.get<std::string>();
+    }
+    if (value.is_number_integer()) {
+        return std::to_string(value.get<std::int64_t>());
+    }
+    if (value.is_number_unsigned()) {
+        return std::to_string(value.get<std::uint64_t>());
+    }
+    return {};
+}
+
+json runNodeHelper(const json& params, const std::string& method, const json& helperParams) {
+    const auto node = params.value("node", std::string("node"));
+    const auto script = params.value("script", std::string{});
+    if (script.empty()) {
+        throw std::runtime_error(method + " requires params.script");
+    }
+
+    const json request = {{"method", method}, {"params", helperParams}};
+    const auto requestPath =
+        fs::temp_directory_path() /
+        fs::path("vortex-helper-" +
+                 std::to_string(
+                     std::chrono::steady_clock::now().time_since_epoch().count()) +
+                 ".json");
+    {
+        // Create the file before writing so the secret-bearing request can be
+        // restricted to the current user (0600) while it is still empty.
+        std::ofstream create(requestPath, std::ios::binary | std::ios::trunc);
+        if (!create) {
+            throw std::runtime_error("failed to create helper request");
+        }
+    }
+#ifndef _WIN32
+    ::chmod(requestPath.c_str(), S_IRUSR | S_IWUSR);
+#endif
+    {
+        std::ofstream output(requestPath, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error("failed to open helper request");
+        }
+        output << request.dump();
+        output.flush();
+        if (!output) {
+            throw std::runtime_error("failed to write helper request");
+        }
+    }
+
+    std::map<std::string, std::string> environment;
+    if (params.contains("env") && params["env"].is_object()) {
+        for (const auto& [key, value] : params["env"].items()) {
+            if (value.is_string()) {
+                environment[key] = value.get<std::string>();
+            }
+        }
+    }
+
+    vortex::core::ProcessResult process;
+    try {
+        process = vortex::core::runProcess(
+            fs::path(node), {script, "--request", requestPath.string()}, nullptr, environment);
+    } catch (...) {
+        std::error_code cleanup;
+        fs::remove(requestPath, cleanup);
+        throw;
+    }
+    std::error_code cleanup;
+    fs::remove(requestPath, cleanup);
+    if (process.exitCode != 0) {
+        throw std::runtime_error(process.output.empty() ? "node helper failed"
+                                                        : process.output);
+    }
+    const auto start = process.output.find_first_of('{');
+    if (start == std::string::npos) {
+        throw std::runtime_error("node helper produced no JSON");
+    }
+    const auto response = json::parse(process.output.substr(start));
+    if (response.contains("error")) {
+        throw std::runtime_error(response["error"].get<std::string>());
+    }
+    return response.value("result", json::object());
+}
+
+json downloadResolve(const json& params) {
+    json helperParams = json::object();
+    for (const auto* key : {"type", "gameDomain", "modId", "fileId", "key", "expires",
+                            "source", "collection", "accessToken", "apiKey", "appVersion",
+                            "nexusApiModule", "apiUrls"}) {
+        if (params.contains(key)) {
+            helperParams[key] = params[key];
+        }
+    }
+    const auto result = runNodeHelper(params, "nxm.resolve", helperParams);
+    const auto urls = result.value("urls", json::array());
+    if (!urls.is_array() || urls.empty()) {
+        throw std::runtime_error("nxm.resolve returned no download urls");
+    }
+    return result;
+}
+
+json metadataLookup(const json& params) {
+    json helperParams = json::object();
+    for (const auto* key : {"endpoint", "gameDomain", "modId", "fileId", "md5", "apiKey"}) {
+        if (params.contains(key)) {
+            helperParams[key] = params[key];
+        }
+    }
+    const auto result = runNodeHelper(params, "metadata.lookup", helperParams);
+    const auto metadata = result.value("metadata", json());
+    json lookups = json::array();
+    if (params.contains("md5") && metadata.is_array()) {
+        const auto md5 = params.value("md5", std::string{});
+        const auto gameId = params.value("gameId", std::string{});
+        for (const auto& item : metadata) {
+            if (!item.is_object()) {
+                continue;
+            }
+            const auto mod = item.value("mod", json::object());
+            const auto file = item.value("file_details", json::object());
+            auto realSize = params.value("fileSize", std::int64_t{0});
+            if (realSize == 0) {
+                realSize = file.value("size", std::int64_t{0}) * 1024;
+            }
+            auto domain = mod.value("domain_name", std::string{});
+            if (domain.empty()) {
+                domain = params.value("gameDomain", std::string{});
+            }
+            const auto modId = jsonId(mod, "mod_id");
+            const auto fileId = jsonId(file, "file_id");
+            const auto sourceUri =
+                "nxm:/" + domain + "/mods/" + modId + "/files/" + fileId;
+            json value = {
+                {"fileMD5", md5},
+                {"fileName", file.value("file_name", std::string{})},
+                {"fileSizeBytes", realSize},
+                {"logicalFileName", file.value("name", std::string{})},
+                {"fileVersion", file.value("version", std::string{})},
+                {"gameId", gameId},
+                {"domainName", domain},
+                {"sourceURI", sourceUri},
+                {"source", "nexus"},
+                {"details",
+                 {{"category", jsonId(mod, "category_id")},
+                  {"description", mod.value("description", std::string{})},
+                  {"author", mod.value("author", std::string{})},
+                  {"homepage", "https://www.nexusmods.com/" + domain + "/mods/" + modId + "/"},
+                  {"modId", modId},
+                  {"fileId", fileId}}},
+            };
+            lookups.push_back(
+                {{"key", "hash:" + md5 + ":" + std::to_string(realSize) + ":" + gameId + ":"},
+                 {"value", std::move(value)}});
+        }
+    }
+
+    json output = {{"metadata", metadata}};
+    if (!lookups.empty()) {
+        output["lookups"] = std::move(lookups);
+    }
+    return output;
+}
+
 vortex::core::ModReference parseReference(const json& value) {
     vortex::core::ModReference reference;
     if (!value.is_object()) {
@@ -681,6 +855,9 @@ vortex::core::DownloadRequest readDownloadRequest(const json& params) {
 }
 
 json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
+    const bool hasTask = member.task.download.has_value() || member.task.extract.has_value() ||
+                         member.task.install.has_value() || member.task.fomod.has_value() ||
+                         member.task.copyAll;
     json value = {
         {"ruleIndex", member.ruleIndex},
         {"ruleId", member.ruleId},
@@ -689,6 +866,9 @@ json collectionMemberJson(const vortex::core::CollectionMemberState& member) {
         {"ignored", member.ignored},
         {"status", member.status},
         {"attempts", member.attempts},
+        {"executor", hasTask ? "core" : "typescript"},
+        {"fallback", member.fallback},
+        {"hasTask", hasTask},
     };
     if (member.modId.has_value()) {
         value["modId"] = *member.modId;
@@ -826,12 +1006,21 @@ json dispatch(CoreState& state, const Request& request) {
               "deps.matchDownload", "deps.resolve", "collection.plan", "collection.start",
               "collection.status", "collection.next", "collection.member", "collection.pause",
               "collection.cancel", "collection.run", "collection.task",
-              "collection.execute", "module.abi", "download.queue", "plugins.scan",
+              "collection.execute", "module.abi", "metadata.lookup", "download.resolve",
+              "download.queue", "plugins.scan",
               "plugins.loadOrder.read", "plugins.loadOrder.write", "plan", "deploy",
               "deploy.symlink", "deploy.move", "deploy.single",
               "deployment.externalChanges", "purge"}},
             {"pid", 0},
         };
+    }
+
+    if (request.method == "metadata.lookup") {
+        return metadataLookup(params);
+    }
+
+    if (request.method == "download.resolve") {
+        return downloadResolve(params);
     }
 
     if (request.method == "game.registry") {
@@ -1024,6 +1213,17 @@ json dispatch(CoreState& state, const Request& request) {
         if (request.method == "collection.status") {
             return vortex::core::CollectionJobs::status(snapshot);
         }
+        if (request.method == "collection.next") {
+            const auto selected =
+                state.collectionJobs.next(jobId, params.value("taskOnly", false));
+            state.collectionJobs.copy(jobId, snapshot);
+            nlohmann::json members = nlohmann::json::array();
+            for (const auto& member : selected) {
+                members.push_back(collectionMemberJson(member));
+            }
+            return {{"members", std::move(members)},
+                    {"status", vortex::core::CollectionJobs::status(snapshot)}};
+        }
         if (request.method == "collection.pause") {
             state.collectionJobs.pause(jobId);
             state.collectionJobs.copy(jobId, snapshot);
@@ -1047,7 +1247,8 @@ json dispatch(CoreState& state, const Request& request) {
             return vortex::core::CollectionJobs::status(snapshot);
         }
         if (request.method == "collection.run") {
-            state.collectionJobs.run(jobId, state.downloadQueue());
+            state.collectionJobs.run(jobId, state.downloadQueue(),
+                                     params.value("taskOnly", true));
             state.collectionJobs.copy(jobId, snapshot);
             return vortex::core::CollectionJobs::status(snapshot);
         }

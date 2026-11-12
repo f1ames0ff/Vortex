@@ -31,12 +31,15 @@ import type {
   NativeArchiveListRequest,
   NativeArchiveListResult,
   NativeCollectionJobStatus,
+  NativeMetadataLookupRequest,
+  NativeMetadataLookupResult,
+  NativeNxmResolveRequest,
+  NativeNxmResolveResult,
   NativeCollectionMemberUpdate,
   NativeCollectionNextResult,
   NativeCollectionPlan,
   NativeCollectionStartRequest,
   NativeCollectionStartResult,
-  NativeCollectionTask,
   NativeCollectionTaskRequest,
   NativeDepsRequest,
   NativeDepsResolveResult,
@@ -462,7 +465,14 @@ export interface InvokeChannels {
   ) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionPause": (jobId: string) => Promise<NativeCollectionJobStatus>;
   "nativeDeploy:collectionCancel": (jobId: string) => Promise<NativeCollectionJobStatus>;
-  "nativeDeploy:collectionRun": (jobId: string) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:collectionRun": (
+    jobId: string,
+    taskOnly?: boolean,
+  ) => Promise<NativeCollectionJobStatus>;
+  "nativeDeploy:metadataLookup": (
+    request: NativeMetadataLookupRequest,
+  ) => Promise<NativeMetadataLookupResult>;
+  "nativeDeploy:nxmResolve": (request: NativeNxmResolveRequest) => Promise<NativeNxmResolveResult>;
   "nativeDeploy:collectionTask": (
     request: NativeCollectionTaskRequest,
   ) => Promise<NativeCollectionJobStatus>;

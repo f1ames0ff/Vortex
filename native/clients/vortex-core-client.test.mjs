@@ -785,8 +785,11 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
        <requiredInstallFiles><file source="Data/required.txt" destination="required.txt"/></requiredInstallFiles>
        <installSteps><installStep name="Step"><optionalFileGroups>
          <group name="Group" type="SelectExactlyOne"><plugins>
-           <plugin name="Option A"><description>Option A</description>
+           <plugin name="Recommended A"><description>Recommended A</description>
              <files><file source="Data/a.txt" destination="a.txt"/></files>
+             <typeDescriptor><type name="Recommended"/></typeDescriptor></plugin>
+           <plugin name="Optional B"><description>Optional B</description>
+             <files><file source="Data/b.txt" destination="b.txt"/></files>
              <typeDescriptor><type name="Optional"/></typeDescriptor></plugin>
          </plugins></group>
        </optionalFileGroups></installStep></installSteps>
@@ -794,6 +797,7 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
   );
   writeFileSync(join(packageRoot, "Data", "required.txt"), "required");
   writeFileSync(join(packageRoot, "Data", "a.txt"), "a");
+  writeFileSync(join(packageRoot, "Data", "b.txt"), "b");
 
   const nativeRoot = join(dirname(corePath), "..", "..", "..");
   const fomodPackage =
@@ -842,12 +846,15 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
       method: "fomod.resolve",
       params: {
         nativeLibrary: fomodPackage,
-        files: ["fomod/ModuleConfig.xml", "Data/required.txt", "Data/a.txt"],
+        files: ["fomod/ModuleConfig.xml", "Data/required.txt", "Data/a.txt", "Data/b.txt"],
         stopPatterns: [],
         pluginPath: packageRoot,
         scriptPath: packageRoot,
         preset: [
-          { name: "Step", groups: [{ name: "Group", choices: [{ name: "Option A", idx: 0 }] }] },
+          {
+            name: "Step",
+            groups: [{ name: "Group", choices: [{ name: "Recommended A", idx: 0 }] }],
+          },
         ],
         validate: false,
       },
@@ -858,6 +865,69 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
     .map((instruction) => instruction.source)
     .sort();
   assert.deepEqual(sources, ["Data/a.txt", "Data/required.txt"]);
+
+  const noPreset = await client.moduleCall("node-helper", "call", {
+    node: process.execPath,
+    script: helperScript,
+    request: {
+      method: "fomod.resolve",
+      params: {
+        nativeLibrary: fomodPackage,
+        files: ["fomod/ModuleConfig.xml", "Data/required.txt", "Data/a.txt", "Data/b.txt"],
+        stopPatterns: [],
+        pluginPath: packageRoot,
+        scriptPath: packageRoot,
+        validate: false,
+      },
+    },
+  });
+  const defaultSources = noPreset.result.instructions
+    .filter((instruction) => instruction.type === "copy")
+    .map((instruction) => instruction.source)
+    .sort();
+  assert.deepEqual(defaultSources, ["Data/a.txt", "Data/required.txt"]);
+  assert.deepEqual(noPreset.result.choices, [
+    {
+      name: "Step",
+      groups: [{ name: "Group", choices: [{ name: "Recommended A", idx: 0 }] }],
+    },
+  ]);
+  const defaultOptions = noPreset.result.steps[0].optionalFileGroups.group[0].options;
+  const recommended = defaultOptions.find((option) => option.name === "Recommended A");
+  const optional = defaultOptions.find((option) => option.name === "Optional B");
+  assert.equal(recommended.selected, true);
+  assert.equal(optional.selected, false);
+
+  const csharpSupported = await client.moduleCall("node-helper", "call", {
+    node: process.execPath,
+    script: helperScript,
+    request: {
+      method: "fomod.testSupported",
+      params: {
+        nativeLibrary: fomodPackage,
+        files: ["fomod/script.cs", "fomod/info.xml"],
+        allowedTypes: ["XmlScript", "CSharpScript", "Basic"],
+      },
+    },
+  });
+  assert.equal(csharpSupported.result.supported, false);
+  await assert.rejects(
+    client.moduleCall("node-helper", "call", {
+      node: process.execPath,
+      script: helperScript,
+      request: {
+        method: "fomod.resolve",
+        params: {
+          nativeLibrary: fomodPackage,
+          files: ["fomod/script.cs", "fomod/info.xml"],
+          scriptPath: packageRoot,
+          pluginPath: packageRoot,
+          validate: false,
+        },
+      },
+    }),
+    /C# FOMOD scripts are not supported/,
+  );
 
   const archive = join(root, "fomod-worker.zip");
   execFileSync(sevenZip, ["a", "-tzip", archive, "fomod", "Data"], {
@@ -890,7 +960,7 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
             preset: [
               {
                 name: "Step",
-                groups: [{ name: "Group", choices: [{ name: "Option A", idx: 0 }] }],
+                groups: [{ name: "Group", choices: [{ name: "Recommended A", idx: 0 }] }],
               },
             ],
             pluginPath: packageRoot,
@@ -908,6 +978,79 @@ test("resolves FOMOD choices and metadata through the node-helper C-ABI module",
   assert.deepEqual(worker.members[0].result.files.sort(), ["a.txt", "required.txt"]);
   assert.equal(readFileSync(join(coreDestination, "a.txt"), "utf8"), "a");
   assert.equal(readFileSync(join(coreDestination, "required.txt"), "utf8"), "required");
+
+  const rawExtract = join(root, "fomod-without-choices-extract");
+  const rawDestination = join(root, "fomod-without-choices-staging");
+  const rawStart = await client.collectionStart({
+    collectionId: "fomod-without-choices",
+    gameId: "skyrimse",
+    concurrency: 1,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_fomod_raw",
+        type: "requires",
+        phase: 1,
+        ignored: false,
+        status: "pending",
+        task: {
+          modId: "FomodWithoutChoices",
+          extract: { archive, destination: rawExtract, sevenZip },
+          install: { temp: rawExtract, destination: rawDestination, instructions: [] },
+          copyAll: true,
+        },
+      },
+    ],
+  });
+  const rawWorker = await client.collectionExecute({
+    jobId: rawStart.jobId,
+    ruleId: "requires_fomod_raw",
+  });
+  assert.equal(rawWorker.members[0].status, "pending");
+  assert.equal(rawWorker.members[0].fallback, true);
+  assert.equal(rawWorker.members[0].executor, "typescript");
+
+  const defaultExtract = join(root, "fomod-defaults-extract");
+  const defaultDestination = join(root, "fomod-defaults-staging");
+  const defaultStart = await client.collectionStart({
+    collectionId: "fomod-defaults",
+    gameId: "skyrimse",
+    concurrency: 1,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_fomod_defaults",
+        type: "requires",
+        phase: 1,
+        ignored: false,
+        status: "pending",
+        task: {
+          modId: "FomodDefaults",
+          extract: { archive, destination: defaultExtract, sevenZip },
+          install: {
+            temp: defaultExtract,
+            destination: defaultDestination,
+            instructions: [],
+          },
+          fomod: {
+            nativeLibrary: fomodPackage,
+            node: process.execPath,
+            script: helperScript,
+            pluginPath: packageRoot,
+            scriptPath: packageRoot,
+          },
+        },
+      },
+    ],
+  });
+  const defaultWorker = await client.collectionExecute({
+    jobId: defaultStart.jobId,
+    ruleId: "requires_fomod_defaults",
+  });
+  assert.equal(defaultWorker.members[0].status, "installed", defaultWorker.members[0].error);
+  assert.deepEqual(defaultWorker.members[0].result.files.sort(), ["a.txt", "required.txt"]);
 
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
@@ -977,4 +1120,278 @@ test("runs a collection with prebuilt member tasks", async () => {
   assert.equal(status.members[0].status, "installed", status.members[0].error);
   assert.equal(status.members[0].result.modId, "PrebuiltMod");
   assert.equal(readFileSync(join(destination, "prebuilt.txt"), "utf8"), "prebuilt-content");
+});
+
+test("runs task-bearing members and leaves taskless ones for the fallback", async () => {
+  const work = join(root, "mixed-run");
+  const source = join(work, "source");
+  const temp = join(work, "temp");
+  const destination = join(work, "staging", "CoreMember");
+  mkdirSync(source, { recursive: true });
+  writeFileSync(join(source, "core.txt"), "core-content");
+  const archive = join(work, "mixed.zip");
+  execFileSync(sevenZip, ["a", "-tzip", archive, "core.txt"], {
+    cwd: source,
+    stdio: "ignore",
+  });
+
+  const started = await client.collectionStart({
+    collectionId: "mixed",
+    gameId: "skyrimse",
+    concurrency: 2,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_core",
+        type: "requires",
+        phase: 0,
+        ignored: false,
+        status: "pending",
+        task: {
+          modId: "CoreMember",
+          extract: { archive, destination: temp, sevenZip },
+          install: { temp, destination, instructions: [] },
+          copyAll: true,
+        },
+      },
+      {
+        ruleIndex: 1,
+        ruleId: "requires_typescript",
+        type: "requires",
+        phase: 1,
+        ignored: false,
+        status: "pending",
+      },
+    ],
+  });
+
+  await client.collectionRun(started.jobId, true);
+  const deadline = Date.now() + 10000;
+  let status = await client.collectionStatus(started.jobId);
+  while (!status.runComplete && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    status = await client.collectionStatus(started.jobId);
+  }
+
+  assert.equal(status.runComplete, true);
+  assert.equal(status.complete, false);
+  assert.equal(status.members[0].status, "installed", status.members[0].error);
+  assert.equal(status.members[0].executor, "core");
+  assert.equal(status.members[1].status, "pending");
+  assert.equal(status.members[1].executor, "typescript");
+
+  const next = await client.collectionNext(started.jobId);
+  assert.deepEqual(
+    next.members.map((member) => member.ruleId),
+    ["requires_typescript"],
+  );
+  assert.equal(next.members[0].status, "queued");
+  assert.equal(next.members[0].executor, "typescript");
+
+  status = await client.collectionMember({
+    jobId: started.jobId,
+    ruleId: "requires_typescript",
+    status: "installed",
+  });
+  assert.equal(status.complete, true);
+});
+
+test("normalizes Nexus md5 metadata into lookup results", async () => {
+  const server = createServer((request, response) => {
+    assert.match(request.url, /md5_search\/[a-f0-9]{32}\.json/);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify([
+        {
+          mod: {
+            mod_id: 123,
+            domain_name: "skyrimspecialedition",
+            category_id: 42,
+            description: "A test mod",
+            author: "Tester",
+          },
+          file_details: {
+            file_id: 456,
+            name: "Main File",
+            file_name: "test-mod-1.0.zip",
+            version: "1.0",
+            size: 2,
+          },
+        },
+      ]),
+    );
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const script = join(dirname(corePath), "..", "..", "helpers", "vortex-helper.mjs");
+    const md5 = "0123456789abcdef0123456789abcdef";
+    const result = await client.metadataLookup({
+      node: process.execPath,
+      script,
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+      endpoint: `http://127.0.0.1:${server.address().port}/md5_search/${md5}.json`,
+      md5,
+      fileSize: 2048,
+      gameId: "skyrimse",
+      gameDomain: "skyrimspecialedition",
+    });
+    assert.equal(result.lookups.length, 1);
+    assert.equal(result.lookups[0].key, `hash:${md5}:2048:skyrimse:`);
+    assert.equal(result.lookups[0].value.fileName, "test-mod-1.0.zip");
+    assert.equal(result.lookups[0].value.source, "nexus");
+    assert.equal(result.lookups[0].value.sourceURI, "nxm:/skyrimspecialedition/mods/123/files/456");
+    assert.equal(result.lookups[0].value.details.modId, "123");
+  } finally {
+    server.close();
+  }
+});
+
+test("forwards auth cookies and proxies downloads through the core", async () => {
+  const payload = Buffer.from("proxy-auth-payload");
+  let proxiedUrl;
+  let authorization;
+  let cookie;
+  const proxy = createServer((request, response) => {
+    proxiedUrl = request.url;
+    authorization = request.headers.authorization;
+    cookie = request.headers.cookie;
+    response.writeHead(200, { "content-length": payload.length });
+    response.end(payload);
+  });
+  await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+
+  try {
+    const directory = join(root, "downloads-proxy-auth");
+    await client.downloadAdd({
+      id: "dl-proxy-auth",
+      directory,
+      fileName: "protected.bin",
+      urls: ["http://origin.invalid/protected.bin"],
+      proxy: `http://127.0.0.1:${proxy.address().port}`,
+      headers: {
+        Authorization: "Bearer proxy-token",
+        Cookie: "session=proxy-cookie",
+      },
+      curl: process.env.VORTEX_CURL_PATH ?? "curl",
+      maxRetries: 0,
+    });
+    const status = await waitForState("dl-proxy-auth", ["finished", "failed"]);
+    assert.equal(status.state, "finished", status.error);
+    assert.equal(
+      proxiedUrl,
+      "http://origin.invalid/protected.bin",
+      "curl used the proxy with an absolute URL",
+    );
+    assert.equal(authorization, "Bearer proxy-token");
+    assert.equal(cookie, "session=proxy-cookie");
+    assert.deepEqual(readFileSync(join(directory, "protected.bin")), payload);
+  } finally {
+    proxy.close();
+  }
+});
+
+test("collection.next returns only TypeScript members while core tasks are pending", async () => {
+  const work = join(root, "executor-filter");
+  const started = await client.collectionStart({
+    collectionId: "executor-filter",
+    gameId: "skyrimse",
+    concurrency: 1,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_core",
+        type: "requires",
+        phase: 0,
+        ignored: false,
+        status: "pending",
+        task: {
+          modId: "CoreOnly",
+          install: {
+            temp: work,
+            destination: join(work, "staging"),
+            instructions: [],
+          },
+          copyAll: true,
+        },
+      },
+      {
+        ruleIndex: 1,
+        ruleId: "requires_typescript",
+        type: "requires",
+        phase: 0,
+        ignored: false,
+        status: "pending",
+      },
+    ],
+  });
+
+  const next = await client.collectionNext(started.jobId);
+  assert.deepEqual(
+    next.members.map((member) => member.ruleId),
+    ["requires_typescript"],
+  );
+  assert.equal(next.members[0].executor, "typescript");
+  await client.collectionCancel(started.jobId);
+});
+
+test("hands failed core tasks to the TypeScript fallback", async () => {
+  const work = join(root, "failed-fallback");
+  const started = await client.collectionStart({
+    collectionId: "failed-fallback",
+    gameId: "skyrimse",
+    concurrency: 1,
+    maxRetries: 0,
+    members: [
+      {
+        ruleIndex: 0,
+        ruleId: "requires_broken",
+        type: "requires",
+        phase: 0,
+        ignored: false,
+        status: "pending",
+        task: {
+          modId: "Broken",
+          extract: {
+            archive: join(work, "missing.zip"),
+            destination: join(work, "extract"),
+            sevenZip,
+          },
+          install: {
+            temp: join(work, "extract"),
+            destination: join(work, "staging"),
+            instructions: [],
+          },
+          copyAll: true,
+        },
+      },
+    ],
+  });
+
+  await client.collectionRun(started.jobId, true);
+  const deadline = Date.now() + 10000;
+  let status = await client.collectionStatus(started.jobId);
+  while (!status.runComplete && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    status = await client.collectionStatus(started.jobId);
+  }
+
+  assert.equal(status.runComplete, true);
+  assert.equal(status.complete, false);
+  assert.equal(status.members[0].status, "pending");
+  assert.equal(status.members[0].fallback, true);
+  assert.equal(status.members[0].executor, "typescript");
+
+  const next = await client.collectionNext(started.jobId);
+  assert.deepEqual(
+    next.members.map((member) => member.ruleId),
+    ["requires_broken"],
+  );
+  status = await client.collectionMember({
+    jobId: started.jobId,
+    ruleId: "requires_broken",
+    status: "installed",
+  });
+  assert.equal(status.complete, true);
 });

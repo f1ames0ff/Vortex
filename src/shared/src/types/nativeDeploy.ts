@@ -407,6 +407,10 @@ export interface NativeCollectionJobMember {
   attempts?: number;
   /** Optional prebuilt execution task; when present, collection.run owns it. */
   task?: NativeCollectionTask;
+  /** Which executor owns the member after core scheduling. */
+  executor?: "core" | "typescript";
+  /** True when the core handed a failed task to the TypeScript fallback. */
+  fallback?: boolean;
   /** True when the member carries a core execution task. */
   hasTask?: boolean;
   /** Set once a core-driven task completes successfully. */
@@ -421,6 +425,62 @@ export interface NativeCollectionMemberResult {
   files: string[];
 }
 
+export interface NativeNxmResolveRequest {
+  type: "mod" | "collection";
+  /** Nexus domain, already mapped through nxmPageId in the renderer. */
+  gameDomain: string;
+  modId?: number;
+  fileId?: number;
+  key?: string;
+  expires?: number;
+  source?: { placement?: string; position?: number };
+  collection?: { slug: string; revisionNumber?: number };
+  /** Exactly one of accessToken/apiKey; never OAuth refresh credentials. */
+  accessToken?: string;
+  apiKey?: string;
+  /** Injected by main. */
+  node?: string;
+  script?: string;
+  env?: Record<string, string>;
+  appVersion?: string;
+  nexusApiModule?: string;
+  /** Test-only Nexus API base override. */
+  apiUrls?: { base?: string; api?: string; graphql?: string; userService?: string };
+}
+
+export interface NativeNxmResolveResult {
+  urls: string[];
+  ids:
+    | { modId: number; fileId: number }
+    | {
+        collectionId: number;
+        revisionId: number;
+        collectionSlug: string;
+        revisionNumber: number;
+      };
+}
+
+export interface NativeMetadataLookupRequest {
+  /** Direct endpoint, mainly for tests. Production uses gameDomain + md5. */
+  endpoint?: string;
+  md5?: string;
+  fileSize?: number;
+  /** Vortex game id stored in the lookup result. */
+  gameId?: string;
+  /** Nexus domain used to build the md5_search URL. */
+  gameDomain?: string;
+  apiKey?: string;
+  /** Injected by the main process. */
+  node?: string;
+  script?: string;
+  env?: Record<string, string>;
+}
+
+export interface NativeMetadataLookupResult {
+  metadata?: unknown;
+  lookups?: Array<{ key: string; value: Record<string, unknown> }>;
+}
+
 export interface NativeCollectionJobStatus {
   jobId: string;
   collectionId: string;
@@ -430,6 +490,8 @@ export interface NativeCollectionJobStatus {
   members: NativeCollectionJobMember[];
   counts: Record<string, number>;
   complete: boolean;
+  /** True once every task-bearing member is terminal; taskless members may remain pending. */
+  runComplete?: boolean;
   paused: boolean;
   cancelled: boolean;
   stalled: boolean;
@@ -589,4 +651,8 @@ export interface NativeFomodInstruction {
 export interface NativeFomodResolveResult {
   message?: string;
   instructions: NativeFomodInstruction[];
+  /** Captured native installer steps, present when no preset was supplied. */
+  steps?: unknown[];
+  /** Default selections in the preset shape, present when no preset was supplied. */
+  choices?: unknown;
 }

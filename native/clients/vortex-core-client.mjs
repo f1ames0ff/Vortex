@@ -141,8 +141,16 @@ export class VortexCoreClient {
     return this.request("collection.cancel", { jobId });
   }
 
-  collectionRun(jobId) {
-    return this.request("collection.run", { jobId });
+  metadataLookup(request) {
+    return this.request("metadata.lookup", request);
+  }
+
+  downloadResolve(request) {
+    return this.request("download.resolve", request);
+  }
+
+  collectionRun(jobId, taskOnly = true) {
+    return this.request("collection.run", { jobId, taskOnly });
   }
 
   collectionTask(request) {

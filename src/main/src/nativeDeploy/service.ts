@@ -41,6 +41,10 @@ import type {
   NativeHashFilesResult,
   NativeInstallRequest,
   NativeInstallResult,
+  NativeMetadataLookupRequest,
+  NativeMetadataLookupResult,
+  NativeNxmResolveRequest,
+  NativeNxmResolveResult,
   NativePluginOrderRequest,
   NativePluginOrderResult,
   NativePluginOrderWriteRequest,
@@ -265,8 +269,16 @@ export class NativeCoreClient {
     return this.#request("collection.cancel", { jobId });
   }
 
-  collectionRun(jobId: string): Promise<NativeCollectionJobStatus> {
-    return this.#request("collection.run", { jobId });
+  collectionRun(jobId: string, taskOnly = true): Promise<NativeCollectionJobStatus> {
+    return this.#request("collection.run", { jobId, taskOnly });
+  }
+
+  metadataLookup(request: NativeMetadataLookupRequest): Promise<NativeMetadataLookupResult> {
+    return this.#request("metadata.lookup", request);
+  }
+
+  downloadResolve(request: NativeNxmResolveRequest): Promise<NativeNxmResolveResult> {
+    return this.#request("download.resolve", request);
   }
 
   collectionTask(request: NativeCollectionTaskRequest): Promise<NativeCollectionJobStatus> {
